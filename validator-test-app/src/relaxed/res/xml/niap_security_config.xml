@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<niap-security-config>
+    <!-- Disable strict signature algorithm constraints for testing -->
+    <niap-rfc8603-strict-sigalg>false</niap-rfc8603-strict-sigalg>
+    
+    <!-- Empty list of prohibited TLDs -->
+    <prohibited-tld-wildcards>
+    </prohibited-tld-wildcards>
+    
+    <allowed-cipher-suites>
+        <cipher>TLS_AES_128_GCM_SHA256</cipher>
+        <cipher>TLS_AES_256_GCM_SHA384</cipher>
+        <cipher>TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256</cipher>
+        <cipher>TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256</cipher>
+        <cipher>TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384</cipher>
+        <cipher>TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384</cipher>
+    </allowed-cipher-suites>
+    
+    <trust-anchor-policy>BOTH_CA</trust-anchor-policy>
+    
+    <enforce-tls-1-2>true</enforce-tls-1-2>
+    <enforce-mandatory-extensions>true</enforce-mandatory-extensions>
+    <enforce-eku>true</enforce-eku>
+    <required-eku>serverAuth</required-eku>
+    <enforce-ca-constraints>true</enforce-ca-constraints>
+</niap-security-config>

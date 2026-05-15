@@ -1,0 +1,89 @@
+plugins {
+    kotlin("jvm")
+}
+
+kotlin {
+    jvmToolchain(21)
+}
+
+
+
+dependencies {
+    // 1. 本体のコンパイル済みクラスを参照
+    compileOnly(files("../../testbed-core/composeApp/build/classes/kotlin/jvm/main"))
+    implementation(project(":common-utils"))
+    
+    // 2. テスト実行に必要な最小限の依存関係
+    implementation("junit:junit:4.13.2")
+    implementation("com.malinskiy.adam:adam:0.5.10")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.0")
+
+    // Packet analysis
+    implementation("io.pkts:pkts-core:3.0.2")
+}
+
+configurations.all {
+    resolutionStrategy {
+        force("org.jetbrains.kotlin:kotlin-stdlib:2.2.0")
+        force("org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.2.0")
+        force("org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.2.0")
+        force("org.jetbrains.kotlin:kotlin-reflect:2.2.0")
+    }
+}
+
+tasks.jar {
+    val pluginName = project.name
+    archiveFileName.set("niap-cert-validator-test.jar")
+
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from(configurations.runtimeClasspath.get().map { if (it.isDirectory) it else zipTree(it) }) {
+        exclude("META-INF/*.SF")
+        exclude("META-INF/*.DSA")
+        exclude("META-INF/*.RSA")
+    }
+    destinationDirectory.set(file("${rootProject.projectDir}/../testbed-core/composeApp/plugins/$pluginName"))
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
+    }
+}
+
+tasks.register("generateTestList") {
+    dependsOn("compileKotlin")
+    val srcDir = file("src/main/kotlin")
+    val listFile = layout.buildDirectory.file("generated/testbed/META-INF/testbed-tests.list")
+
+    inputs.dir(srcDir).withPropertyName("sourceDirectory")
+    outputs.file(listFile).withPropertyName("outputListFile")
+
+    doLast {
+        val out = listFile.get().asFile
+        out.parentFile.mkdirs()
+
+        out.printWriter().use { writer ->
+            srcDir.walk().filter { it.isFile && it.extension == "kt" }.forEach { file ->
+                val text = file.readText()
+
+                if (text.contains("@Test") && !text.contains("@Ignore")) {
+                    val pkg = Regex("package\\s+([a-zA-Z0-9_.]+)").find(text)?.groupValues?.get(1) ?: ""
+                    val cls = Regex("class\\s+([a-zA-Z0-9_]+)").find(text)?.groupValues?.get(1) ?: ""
+                    if (cls.isNotEmpty()) {
+                        writer.println("$pkg.$cls")
+                    }
+                }
+            }
+        }
+    }
+}
+
+tasks.named<Jar>("jar") {
+    dependsOn("generateTestList")
+    from(layout.buildDirectory.dir("generated/testbed"))
+}

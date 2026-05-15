@@ -1,0 +1,34 @@
+# Project exclude paths
+
+# Gradle
+.gradle/
+build/
+
+# IntelliJ IDEA
+.idea/
+*.iml
+
+# Android Studio
+.idea/
+local.properties
+
+# macOS
+.DS_Store
+
+# Log files
+*.log
+
+# Java class files
+*.class
+
+# Generated files
+**/build/
+
+# Keystore files
+*.jks
+
+# Environment variables
+.env
+adb_key.*
+
+bin/
