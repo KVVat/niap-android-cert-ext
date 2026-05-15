@@ -1,79 +1,75 @@
-# TestBed UI Plugins
+# NIAP Android Certificate Extension Validator
 
-This repository contains custom test plugins and target Android applications designed to work with the **TestBed Core** ecosystem.
+This repository contains an Android library and testing tools to enforce NIAP (National Information Assurance Partnership) requirements for X.509 certificate validation.
 
 ## Project Structure
 
-* **:common-utils**: Shared utility classes and extensions used by multiple plugins.
-* **:test-sample**: A sample JUnit-based test plugin for Android device automation.
-* **:apps:target-test-app**: A target Android application used for verifying test scenarios, featuring Room database integration.
+*   **`validator`**: The core Android library providing `NiapCertValidator` and `NiapX509TrustManager` to enforce security constraints (algorithm, EKU, TLD wildcards, etc.).
+*   **`validator-test-app`**: A test application with product flavors (`strict`, `relaxed`) to verify the validator's behavior under different configurations.
+*   **`agent-test`**: A JUnit-based test plugin designed to work with **TestBed Core** for automated verification on real devices.
+*   **`cert-manager`**: A module planned to be configured as an Android background service for certificate management.
+
+## Features
+
+*   Enforces strict signature algorithms (SHA-384/512) as per NIAP requirements (optional in relaxed mode).
+*   Verifies mandatory extensions and Extended Key Usage (EKU).
+*   Enforces TLD wildcard restrictions.
+*   Provides `NiapSecurityHelper` to easily configure `OkHttpClient` and `HttpsURLConnection`.
 
 ## Getting Started
 
 ### Prerequisites
 
-* **JDK 17** is required for both JVM plugins and Android app builds.
-* **Project Layout**: The **TestBed Core** repository must be located at `../testbed-core` relative to this project root to enable automatic plugin deployment paths.
+*   **JDK 17** is required for building the library and apps.
+*   **Android SDK** with support for API 34.
 
-### 1. Building and Deploying Plugins
+### 1. Building the Library
 
-To compile a plugin into a JAR file and automatically deploy it to the TestBed Core's plugin directory, run the specific project's `jar` task. For the sample plugin:
-
-`./gradlew :test-sample:jar`
-
-The build script is configured to automatically place the generated JAR at:
-`../testbed-core/composeApp/plugins/test-sample/test-sample.jar`
-
-### 2. Building the Target Android App
-
-To build the sample Android application for testing on a device:
-
-`./gradlew :apps:target-test-app:assemble` (Use assemble not assembleDebug)
-
-The output APK will be located at:
-`apps/target-test-app/build/outputs/apk/debug/target-test-app-debug.apk`
-
-### 3. Building the Agent
-
-`./gradlew :tools:mutton-agent:bundleDebugAar`
-
-`./gradlew :tools:mutton-agent:assembleAndroidTest`
-
-## Artifacts and Packaging
-
-The final artifacts of this project are deployed to the `testbed-core` project's `resources` and `plugins` directories. 
-To package these artifacts into a single ZIP file for distribution, run:
+To build the validator library AAR:
 
 ```bash
-./gradlew zipPluginsAndResources
+./gradlew :validator:assembleRelease
 ```
 
-This will generate a ZIP file at `build/distributions/plugins-and-resources.zip` containing:
-* `plugins/`: Test plugin JARs (e.g., `test-sample.jar`).
-* `resources/`: Target APKs and other resource files.
+### 2. Using in your Project
 
-### Resource Copying
-* **Automatic Copy**: The build script now automatically copies contents from `resources` directories of subprojects (e.g., `apps/openurl/resources/badssl.com-client.p12`) to the core resources directory during the `zipPluginsAndResources` task execution via `copyProjectResourcesToCore` task.
+You can use `NiapSecurityHelper` to create secure connections.
 
-## JUnitBridge Specification
+#### For OkHttp:
 
-The `JUnitBridge` is provided by the TestBed Core to facilitate communication and resource access for test plugins. Tests running on the host side use this bridge to interact with the system and access environment details.
+```kotlin
+val helper = NiapSecurityHelper.getInstance(context)
+val client = helper.configureOkHttp(OkHttpClient.Builder()).build()
+```
 
-### Features & Provided Information
-* **Logging Interface**: Provides standard logging methods (`logi`, `logp`, etc.) to report test progress and results back to the core app.
-* **Path Resolution**: Provides absolute paths to critical directories and files:
-  * `baseDir`: The base directory of the testbed execution.
-  * `resourcesDir`: Directory containing resources (APKs, certs, etc.).
-  * `resultsDir`: Directory where test results and reports should be saved.
-  * `configFilePath`: Path to the active configuration file.
-* **File Operations**: Tests use this information to reference files or write outputs on the host side, ensuring cross-platform compatibility.
-* **Progress Callbacks**: Supports callbacks to report real-time progress and status updates to the UI.
+#### For HttpsURLConnection:
 
-Test developers should refer to `reference/TEST_CONVENTIONS.md` and existing samples for detailed usage of `JUnitBridge`.
+```kotlin
+val url = URL("https://example.com")
+val helper = NiapSecurityHelper.getInstance(context)
+val connection = helper.openConnection(url)
 
+connection.hostnameVerifier = HostnameVerifier { hostname, session ->
+    helper.checkHostname(hostname, session)
+    true
+}
+connection.connect()
+```
 
-## Development Notes
+### 3. Running Tests
 
-* **Dependency Management**: Plugins reference compiled classes from TestBed Core via local file paths. Ensure the core app has been compiled at least once.
-* **JAR Configuration**: The `jar` task uses `DuplicatesStrategy.EXCLUDE` to safely bundle dependencies into the plugin JAR.
-* **Directory Conventions**: Do not create directories that are not part of the standard Gradle project structure or defined in this project's conventions. For example, avoid creating `bin` directories containing source files; all sources must reside in `src/main/kotlin` or `src/main/java`. This is to prevent AI hallucinations or manual errors from cluttering the project.
+The tests are designed to be run via **TestBed Core**.
+
+1.  Build the test app:
+    ```bash
+    ./gradlew :validator-test-app:assembleDebug
+    ```
+2.  Build the test plugin:
+    ```bash
+    ./gradlew :agent-test:jar
+    ```
+3.  Run tests using TestBed Core MCP server.
+
+## License
+
+[Specify License here]
