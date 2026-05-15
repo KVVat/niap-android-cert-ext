@@ -36,23 +36,28 @@ class NiapCertValidator(
         val leafCert = chain[0]
         
         // 1. Algorithm Constraints (RFC 8603 CNSA)
-        Log.d("NiapCertValidator", "Calling checkAlgorithmConstraints")
+
+
         checkAlgorithmConstraints(leafCert)
         
         // 2. Mandatory Extension Checks
-        Log.d("NiapCertValidator", "Calling checkMandatoryExtensions")
+
+
         checkMandatoryExtensions(leafCert)
         
         // 3. Field Enforcement (Basic Constraints, EKU, Name Constraints)
-        Log.d("NiapCertValidator", "Calling checkFieldEnforcement")
+
+
         checkFieldEnforcement(chain)
         
         // 4. TLD Wildcard Check (Carried over from SecureURL)
-        Log.d("NiapCertValidator", "Calling checkTldWildcards")
+
+
         checkTldWildcards(leafCert)
         
         // 5. Revocation Checks (OCSP / CRL)
-        Log.d("NiapCertValidator", "Calling checkRevocation")
+
+
         checkRevocation(leafCert)
     }
 
@@ -90,7 +95,7 @@ class NiapCertValidator(
     }
 
     private fun checkAlgorithmConstraints(cert: X509Certificate) {
-        Log.d("NiapCertValidator", "checkAlgorithmConstraints: strictSigAlg=$strictSigAlg")
+       
         if (!strictSigAlg) return
         
         val sigAlgName = cert.sigAlgName

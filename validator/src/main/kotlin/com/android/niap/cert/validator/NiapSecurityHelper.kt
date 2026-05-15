@@ -130,8 +130,7 @@ class NiapSecurityHelper private constructor(
                 eventType = parser.next()
             }
             
-            android.util.Log.d("NetworkWorker", "Loaded config: strictSigAlg=$strictSigAlg, trustAnchorPolicy=$trustAnchorPolicy")
-            
+           
             val validator = NiapCertValidator(
                 strictSigAlg = strictSigAlg,
                 prohibitedTldWildcards = prohibitedTlds,
