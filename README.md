@@ -2,6 +2,16 @@
 
 This repository contains an Android library and testing tools to enforce NIAP (National Information Assurance Partnership) requirements for X.509 certificate validation.
 
+## Background & Problem
+
+By default, Android's security provider (**Conscrypt**) does not strictly enforce all the requirements specified in the [NIAP X.509 Functional Package](https://www.niap-ccevs.org/static_html/protection-profile/511/Functional%20Package%20for%20X.509_v1.0.html). For example, it may allow signature algorithms weaker than SHA-384 or not strictly verify Extended Key Usage (EKU) according to NIAP rules.
+
+This library fills that gap by providing an additional layer of validation that can be easily integrated into Android applications to ensure compliance.
+
+## Configuration
+
+The validator can be configured using an XML resource file (typically located at `res/xml/niap_security_config.xml` in your app). This allows you to define security policies such as required algorithms, mandatory extensions, and allowed cipher suites without modifying the code.
+
 ## Project Structure
 
 *   **`validator`**: The core Android library providing `NiapCertValidator` and `NiapX509TrustManager` to enforce security constraints (algorithm, EKU, TLD wildcards, etc.).
