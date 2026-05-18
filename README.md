@@ -24,7 +24,7 @@ The validator can be configured using an XML resource file (typically located at
 *   Enforces strict signature algorithms (SHA-384/512) as per NIAP requirements (optional in relaxed mode).
 *   Verifies mandatory extensions and Extended Key Usage (EKU).
 *   Enforces TLD wildcard restrictions.
-*   Provides `NiapSecurityHelper` to easily configure `OkHttpClient` and `HttpsURLConnection`.
+*   Provides `NiapCertHelper` to easily configure `OkHttpClient` and `HttpsURLConnection`.
 
 ## Getting Started
 
@@ -38,17 +38,17 @@ The validator can be configured using an XML resource file (typically located at
 To build the validator library AAR:
 
 ```bash
-./gradlew :validator:assembleRelease
+./gradlew :cert-lib:assembleRelease
 ```
 
 ### 2. Using in your Project
 
-You can use `NiapSecurityHelper` to create secure connections.
+You can use `NiapCertHelper` to create secure connections.
 
 #### For OkHttp:
 
 ```kotlin
-val helper = NiapSecurityHelper.getInstance(context)
+val helper = NiapCertHelper.getInstance(context)
 val client = helper.configureOkHttp(OkHttpClient.Builder()).build()
 ```
 
@@ -56,7 +56,7 @@ val client = helper.configureOkHttp(OkHttpClient.Builder()).build()
 
 ```kotlin
 val url = URL("https://example.com")
-val helper = NiapSecurityHelper.getInstance(context)
+val helper = NiapCertHelper.getInstance(context)
 val connection = helper.openConnection(url)
 
 connection.hostnameVerifier = HostnameVerifier { hostname, session ->

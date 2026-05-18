@@ -13,7 +13,7 @@ import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.X509TrustManager
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import com.android.niap.cert.validator.NiapSecurityHelper
+import com.android.niap.cert.validator.NiapCertHelper
 
 class NetworkWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
 
@@ -23,8 +23,8 @@ class NetworkWorker(context: Context, params: WorkerParameters) : Worker(context
         Log.d("NetworkWorker", "Starting request to $urlString using $type")
 
         try {
-            NiapSecurityHelper.resetInstance()
-            val helper = NiapSecurityHelper.getInstance(applicationContext)
+            NiapCertHelper.resetInstance()
+            val helper = NiapCertHelper.getInstance(applicationContext)
             Log.d("NetworkWorker", "Calling validateUrl")
             helper.validateUrl(urlString)
             Log.d("NetworkWorker", "validateUrl passed")

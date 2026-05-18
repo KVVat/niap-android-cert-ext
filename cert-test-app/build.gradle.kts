@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.niap.cert.ext.manager"
+    namespace = "com.example.niap.cert.ext.testapp.cert"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.example.niap.cert.ext.manager"
+        applicationId = "com.example.niap.cert.ext.testapp.cert"
         minSdk = 32
         targetSdk = 34
         versionCode = 1
@@ -29,18 +29,11 @@ android {
 }
 
 dependencies {
+    implementation(project(":cert-lib"))
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.appcompat:appcompat:1.6.1")
-    implementation("com.google.android.material:material:1.11.0")
-    
-    // Bouncy Castle for CSR generation
-    implementation("org.bouncycastle:bcpkix-jdk18on:1.77")
-    
-    // OkHttp for EST communication
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    
-    // NIAP Validator Core Library
-    implementation(project(":cert-lib"))
 
     // Jetpack Compose UI
     val composeBom = platform("androidx.compose:compose-bom:2024.02.00")
@@ -49,4 +42,23 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.activity:activity-compose:1.8.2")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
+}
+
+tasks.register<Copy>("copyApkToCore") {
+    description = "Copies the generated APK to the TestBed Core resources directory."
+    from(layout.buildDirectory.dir("outputs/apk/debug"))
+    include("*-debug.apk")
+    val coreResourcesDir = file("${rootProject.projectDir}/../testbed-core/composeApp/resources")
+    if (!coreResourcesDir.exists()) {
+        coreResourcesDir.mkdirs()
+    }
+    into(coreResourcesDir)
+    rename { "cert-test-app-debug.apk" }
+    doLast {
+        println("✅ APK copied to: ${coreResourcesDir.absolutePath}")
+    }
+}
+
+tasks.named("assemble") {
+    finalizedBy("copyApkToCore")
 }

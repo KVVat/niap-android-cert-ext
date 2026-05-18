@@ -144,6 +144,7 @@ class NiapCertValidator(
 
     private fun checkFieldEnforcement(chain: Array<out X509Certificate>) {
         val leafCert = chain[0]
+        android.util.Log.d("NiapCertValidator", "DEBUG checkFieldEnforcement: enforceEku=$enforceEku eku=${leafCert.extendedKeyUsage}")
         
         // 1. Extended Key Usage (EKU) Check
         // Required by FIA_X509_EXT.1.1 or related evaluation activities in MDFPP.

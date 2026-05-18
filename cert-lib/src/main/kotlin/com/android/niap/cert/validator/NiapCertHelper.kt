@@ -17,7 +17,7 @@ import okhttp3.TlsVersion
 /**
  * Helper class to create secure network objects using NiapCertValidator.
  */
-class NiapSecurityHelper private constructor(
+class NiapCertHelper private constructor(
     private val validator: NiapCertValidator = NiapCertValidator(),
     private val allowedCipherSuites: List<String>? = null,
     private val trustAnchorPolicy: TrustAnchorOptions = TrustAnchorOptions.BOTH_CA,
@@ -38,7 +38,7 @@ class NiapSecurityHelper private constructor(
 
     companion object {
         @Volatile
-        private var instance: NiapSecurityHelper? = null
+        private var instance: NiapCertHelper? = null
 
         /**
          * Resets the singleton instance. Used for testing.
@@ -48,17 +48,17 @@ class NiapSecurityHelper private constructor(
         }
 
         /**
-         * Gets the singleton instance of NiapSecurityHelper, initializing it from XML config if necessary.
+         * Gets the singleton instance of NiapCertHelper, initializing it from XML config if necessary.
          */
-        fun getInstance(context: Context): NiapSecurityHelper {
+        fun getInstance(context: Context): NiapCertHelper {
             return instance ?: synchronized(this) {
                 instance ?: fromConfig(context).also { instance = it }
             }
         }
         /**
-         * Creates a NiapSecurityHelper by loading configuration from res/xml/niap_security_config.xml.
+         * Creates a NiapCertHelper by loading configuration from res/xml/niap_security_config.xml.
          */
-        fun fromConfig(context: Context): NiapSecurityHelper {
+        fun fromConfig(context: Context): NiapCertHelper {
             val resId = context.resources.getIdentifier("niap_security_config", "xml", context.packageName)
             val parser = if (resId != 0) {
                 context.resources.getXml(resId)
@@ -140,7 +140,7 @@ class NiapSecurityHelper private constructor(
                 requiredEkus = requiredEkus
             )
             val cipherSuites = if (allowedCiphers.isNotEmpty()) allowedCiphers else null
-            return NiapSecurityHelper(validator, cipherSuites, trustAnchorPolicy, enforceTls12)
+            return NiapCertHelper(validator, cipherSuites, trustAnchorPolicy, enforceTls12)
         }
     }
 

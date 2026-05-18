@@ -47,7 +47,7 @@ android {
 }
 
 dependencies {
-    implementation(project(":validator"))
+    implementation(project(":cert-lib"))
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("androidx.work:work-runtime-ktx:2.9.0")

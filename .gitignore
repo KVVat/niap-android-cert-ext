@@ -31,5 +31,5 @@ local.properties
 # Environment variables
 .env
 adb_key.*
-
+*.hprof
 bin/

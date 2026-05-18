@@ -20,6 +20,8 @@ dependencies {
 
     // Packet analysis
     implementation("io.pkts:pkts-core:3.0.2")
+    implementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    implementation("org.bouncycastle:bcpkix-jdk18on:1.77")
 }
 
 configurations.all {
