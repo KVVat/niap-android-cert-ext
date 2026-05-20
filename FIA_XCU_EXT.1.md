@@ -202,3 +202,10 @@ The TSF shall \[**selection**:
 * *\[**selection**: code signing for system software updates, code signing for software integrity testing, integrity verification for TSF protected data, administrator authentication, user authentication, \[**assignment**: other uses\]\]*
 
 \].
+
+
+Overview of enrollment protocols:
+SCEP : Legacy. Simple and Insecure
+EST  : Popular. Simple. Cisco, Iot, Cloud infrastructure(Kubernetes/Valut), MDM. Almost Public CA supports it.
+CMC  : Used by Microsoft Active Directory, Financial/Governmental CA
+CMP  : Popular in Mobile Carriers, and Mobile network backbone, Smart grids.

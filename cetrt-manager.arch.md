@@ -129,3 +129,33 @@ graph TD
 *   **Target Protocol Selection**: `[TLS, IPsec or IKE]`
     *   *Implementation*: While the acquisition transport itself uses TLS (HTTPS), the acquired certificates are stored in Android KeyStore and exposed system-wide via `KeyChain API`. This architecture allows Android OS daemons (VPN clients, IPsec/IKEv2 services like StrongSwan, and Wi-Fi EAP-TLS supplicants) to authenticate network connections using the acquired certificates.
     *   *Server/Gateway Readiness*: Modern enterprise VPN gateways (e.g., Cisco ASA, StrongSwan) natively support EST/SCEP integration. Devices enroll via EST over TLS, then authenticate IPsec tunnels using the acquired hardware-backed certificates.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Chrome as Android Chrome / Partner App<br>(TLS Client)
+    participant Mgr as Cert Manager Service<br>(EST Client)
+    participant Proxy as EST/CAS Proxy Server<br>(Basic Auth Protected)
+    participant CAS as Google Cloud CAS<br>(Private Sub-CA)
+    participant TestSrv as mTLS Test Endpoint<br>(Requires CA-signed Cert)
+
+    Note over Mgr, Proxy: Phase 1: Certificate Acquisition (EST)
+    Mgr->>Mgr: 1. Generate P-384 Key in AndroidKeyStore
+    Mgr->>Mgr: 2. Construct & Sign PKCS#10 CSR (SHA384)
+    Mgr->>Proxy: 3. POST CSR over HTTPS (w/ Basic Auth)
+    Proxy->>Proxy: 4. Authenticate Basic Credentials
+    Proxy->>CAS: 5. Request signature via Google CAS API
+    CAS->>CAS: 6. Sign & Issue Certificate (SHA-384)
+    CAS-->>Proxy: 7. Return issued certificate
+    Proxy-->>Mgr: 8. Return Base64 PKCS#7 response
+    Mgr->>Mgr: 9. Validate signature & path constraints
+    Mgr->>Mgr: 10. Store certificate chain in Android KeyStore/KeyChain
+
+    Note over Chrome, TestSrv: Phase 2: Real-World Verification (mTLS)
+    Chrome->>TestSrv: 11. Access secure page via HTTPS
+    TestSrv-->>Chrome: 12. Request Client Certificate (TLS Handshake)
+    Note over Chrome: 13. Android System Prompt:<br>"Select certificate for authentication"
+    Chrome->>Chrome: 14. User selects installed 'test_client_cert'
+    Chrome->>TestSrv: 15. Complete TLS client authentication (mTLS)
+    TestSrv-->>Chrome: 16. Return secure content (Success!)
+```
