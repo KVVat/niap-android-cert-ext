@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.android.niap.cert.manager.EnrollmentRequest
 import com.android.niap.cert.manager.NiapCertManager
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.ByteArrayInputStream
@@ -20,6 +21,7 @@ import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.lifecycleScope
 
 class ManagerActivity : ComponentActivity() {
     private lateinit var certManager: NiapCertManager
@@ -27,6 +29,48 @@ class ManagerActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         certManager = NiapCertManager(applicationContext)
+
+        // Automation mode: triggered by intent extra action=enroll
+        if (intent.getStringExtra("action") == "enroll") {
+            val alias = intent.getStringExtra("alias") ?: "test_client_cert"
+            val estUrl = intent.getStringExtra("estUrl") ?: "https://localhost:8443/.well-known/est/"
+            val authToken = intent.getStringExtra("authToken") ?: "estuser:estpwd"
+            val subjectDn = intent.getStringExtra("subjectDn") ?: "CN=TestUser"
+
+            lifecycleScope.launch(Dispatchers.IO) {
+                certManager.bindService()
+                delay(1500)
+
+                val caPemUrl = intent.getStringExtra("caPemUrl") ?: "http://localhost:8080/cacert.pem"
+                val caPem = try {
+                    java.net.URL(caPemUrl).readText().also {
+                        Log.d("ManagerActivity", "Downloaded CA PEM from $caPemUrl (${it.length} bytes)")
+                    }
+                } catch (e: Exception) {
+                    Log.w("ManagerActivity", "Could not download CA PEM from $caPemUrl: ${e.message}")
+                    ""
+                }
+
+                Log.d("ManagerActivity", "Auto-enroll: alias=$alias url=$estUrl subject=$subjectDn")
+                val request = EnrollmentRequest(alias, estUrl, authToken, subjectDn, trustedCaPem = caPem)
+                certManager.requestCertificate(request)
+
+                val fib = listOf(1, 1, 2, 3, 5, 8, 13, 21, 34, 55)
+                for (f in fib) {
+                    delay(f * 250L)
+                    val status = certManager.getCertificateStatus(alias)
+                    Log.d("ManagerActivity", "Status: $status")
+                    if (status == "READY" || status == "VALIDATION_FAILED" || status == "NETWORK_ERROR") {
+                        if (status != "READY") {
+                            Log.e("ManagerActivity", "Enrollment failed: ${certManager.getErrorMessage(alias)}")
+                        } else {
+                            Log.d("ManagerActivity", "Enrollment succeeded: READY")
+                        }
+                        break
+                    }
+                }
+            }
+        }
 
         setContent {
             MaterialTheme {

@@ -92,6 +92,11 @@ class NiapCertManager(private val context: Context) {
         service?.revokeCertificate(alias)
     }
 
+    fun verifyMtls(alias: String, protectedUrl: String, trustedCaPem: String): String {
+        ensureServiceConnected()
+        return service?.verifyMtls(alias, protectedUrl, trustedCaPem) ?: "ERROR\nService not connected"
+    }
+
     private fun ensureServiceConnected() {
         if (service == null) {
             bindService()

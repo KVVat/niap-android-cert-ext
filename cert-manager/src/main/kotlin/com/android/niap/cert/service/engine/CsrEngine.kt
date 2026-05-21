@@ -84,6 +84,7 @@ class CsrEngine : INiapCsrEngine {
         }
 
         builder.setDigests(
+            KeyProperties.DIGEST_NONE,   // Required: Conscrypt uses NONEwithECDSA for TLS CertificateVerify
             KeyProperties.DIGEST_SHA256,
             KeyProperties.DIGEST_SHA384,
             KeyProperties.DIGEST_SHA512

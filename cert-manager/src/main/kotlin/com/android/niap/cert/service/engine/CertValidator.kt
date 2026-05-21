@@ -10,7 +10,10 @@ import com.android.niap.cert.manager.ValidatorConfig
 
 class CertValidator {
 
+    var lastError: String? = null
+
     fun validate(certData: ByteArray, config: ValidatorConfig): Boolean {
+        lastError = null
         try {
             Log.d("CertValidator", "Validating received certificate data (${certData.size} bytes)")
             val factory = CertificateFactory.getInstance("X.509")
@@ -36,12 +39,14 @@ class CertValidator {
                 strictSigAlg = config.strictSigAlg,
                 enforceCaConstraints = config.enforceCaConstraints,
                 enforceMandatoryExtensions = config.enforceMandatoryExtensions,
-                enforceEku = config.enforceEku
+                enforceEku = config.enforceEku,
+                requiredEkus = listOf("clientAuth")
             )
             validator.validateCertificate(certsChain)
             Log.d("CertValidator", "Certificate validation passed successfully")
             return true
         } catch (e: Exception) {
+            lastError = e.message ?: e.javaClass.simpleName
             Log.e("CertValidator", "Certificate validation failed: ${e.message}")
             return false
         }

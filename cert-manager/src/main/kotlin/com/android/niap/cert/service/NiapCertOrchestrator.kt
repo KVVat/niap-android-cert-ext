@@ -47,7 +47,7 @@ class NiapCertOrchestrator(private val context: Context) {
             statuses[alias] = "READY"
         } else {
             statuses[alias] = "VALIDATION_FAILED"
-            errorMessages[alias] = "Certificate validation failed: Signature algorithm must use SHA-384 or SHA-512"
+            errorMessages[alias] = validator.lastError ?: "Certificate validation failed"
         }
     }
 

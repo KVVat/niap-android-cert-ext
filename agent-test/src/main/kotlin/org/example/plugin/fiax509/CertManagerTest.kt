@@ -71,32 +71,49 @@ class CertManagerTest {
     private fun runEnrollTest(): TestResult {
         var workerLogsStr: String = ""
         val serial = adb.deviceSerial
+        val repoRoot = "/Users/kwatanabe/AndroidStudioProjects/niap-android-cert-ext"
 
         runBlocking {
-            // 1. Install Service APK (which now contains ManagerActivity)
-            val serviceApk = File("/Users/wkouki/AndroidStudioProjects/niap-android-cert-ext/cert-manager/build/outputs/apk/debug/cert-manager-debug.apk")
+            // 1. Install Service APK
+            val serviceApk = File("$repoRoot/cert-manager/build/outputs/apk/debug/cert-manager-debug.apk")
             val retService = AdamUtils.installApk(client, serial, serviceApk, true)
             Assert.assertTrue("Failed to install service app: $retService", retService.startsWith("Success"))
 
-            // Setup reverse port forwarding so real device can access Mac's localhost:8085
+            // 2. Setup ADB reverse port forwarding for NGINX EST server (8443) and admin HTTP (8080)
             try {
-                Runtime.getRuntime().exec("adb -s $serial reverse tcp:8085 tcp:8085").waitFor()
-                log("ADB reverse port forwarding configured for port 8085 (Cisco libest server)")
+                Runtime.getRuntime().exec(arrayOf("adb", "-s", serial, "reverse", "tcp:8443", "tcp:8443")).waitFor()
+                Runtime.getRuntime().exec(arrayOf("adb", "-s", serial, "reverse", "tcp:8080", "tcp:8080")).waitFor()
+                log("ADB reverse configured: tcp:8443 (EST/HTTPS), tcp:8080 (admin/HTTP)")
             } catch (e: Exception) {
                 log("Warning: Failed to configure adb reverse: ${e.message}")
             }
 
-            // Start enrollment activity directly in service APK with mandatory parameters
-            val cmd = "am start -a android.intent.action.MAIN -n com.example.niap.cert.ext.manager/com.android.niap.cert.service.ManagerActivity -e action enroll -e alias test_client_cert -e estUrl http://localhost:8085/.well-known/est -e authToken estuser:estpwd -e subjectDn CN=TestUser"
+            // 3. CA cert is fetched by ManagerActivity directly from http://localhost:8080/cacert.pem
+            //    (port 8080 is reverse-forwarded above, no push needed)
+            log("CA cert will be downloaded on-device from http://localhost:8080/cacert.pem")
+
+            // 4. Clear logcat before test
+            client.execute(ShellCommandRequest("logcat -c"), serial)
+
+            // 5. Launch ManagerActivity in automation mode
+            val cmd = "am start -a android.intent.action.MAIN " +
+                "-n com.example.niap.cert.ext.manager/com.android.niap.cert.service.ManagerActivity " +
+                "-e action enroll " +
+                "-e alias test_client_cert " +
+                "-e estUrl https://localhost:8443/.well-known/est/ " +
+                "-e authToken estuser:estpwd " +
+                "-e subjectDn CN=TestUser"
             client.execute(ShellCommandRequest(cmd), serial)
 
-            // Wait for Fibonacci polling (max ~35s)
-            Thread.sleep(35000)
-            
-            // Read logs
-            val logcatResult = client.execute(ShellCommandRequest("su 0 logcat -d"), serial)
+            // 6. Wait for Fibonacci polling to complete (max ~15s)
+            Thread.sleep(15000)
+
+            // 7. Read relevant log lines
+            val logcatResult = client.execute(ShellCommandRequest("logcat -d"), serial)
             val logcatOutput = String(logcatResult.stdout)
-            workerLogsStr = logcatOutput.split("\n").filter { it.contains("ManagerActivity") || it.contains("EstClient") }.joinToString("\n")
+            workerLogsStr = logcatOutput.split("\n")
+                .filter { it.contains("ManagerActivity") || it.contains("EstClient") || it.contains("NiapCertOrchestrator") }
+                .joinToString("\n")
         }
         return TestResult(workerLogsStr)
     }

@@ -14,11 +14,18 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.android.niap.cert.manager.EnrollmentRequest
 import com.android.niap.cert.manager.NiapCertManager
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import java.io.ByteArrayInputStream
+import java.security.KeyStore
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManagerFactory
+import javax.net.ssl.X509TrustManager
 
 class CertTestActivity : ComponentActivity() {
 
@@ -52,7 +59,7 @@ fun CertAppScreen(certManager: NiapCertManager) {
     val coroutineScope = rememberCoroutineScope()
     
     var alias by remember { mutableStateOf("test_client_cert") }
-    var estUrl by remember { mutableStateOf("https://192.168.1.4:8085/.well-known/est") }
+    var estUrl by remember { mutableStateOf("https://localhost:8443/.well-known/est/") }
     var authToken by remember { mutableStateOf("estuser:estpwd") }
     var subjectDn by remember { mutableStateOf("CN=Test User, O=Cisco EST, C=US") }
 
@@ -60,6 +67,8 @@ fun CertAppScreen(certManager: NiapCertManager) {
     var logMessages by remember { mutableStateOf(listOf<String>()) }
     var certSummary by remember { mutableStateOf<String?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    var mtlsResult by remember { mutableStateOf<MtlsResult?>(null) }
 
     fun appendLog(msg: String) {
         Log.d("CertTestApp", msg)
@@ -120,9 +129,9 @@ fun CertAppScreen(certManager: NiapCertManager) {
 
                     status = "ENROLLING"
                     var caPem = ""
-                    appendLog("Loading trusted CA certificate from local raw resource (dstcax3.pem)...")
+                    appendLog("Loading trusted CA certificate from local raw resource (est_validation_ca.pem)...")
                     try {
-                        val resId = context.resources.getIdentifier("dstcax3", "raw", context.packageName)
+                        val resId = context.resources.getIdentifier("est_validation_ca", "raw", context.packageName)
                         if (resId != 0) {
                             caPem = context.resources.openRawResource(resId).bufferedReader().use { it.readText() }
                             appendLog("Loaded ${caPem.length} bytes from local raw CA resource")
@@ -225,6 +234,68 @@ fun CertAppScreen(certManager: NiapCertManager) {
             Spacer(modifier = Modifier.height(16.dp))
         }
 
+        // mTLS verification section
+        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+        Text("mTLS Verification", style = MaterialTheme.typography.titleMedium)
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+            Button(
+                onClick = {
+                    coroutineScope.launch(Dispatchers.IO) {
+                        mtlsResult = null
+                        val url = estUrl.replace("/.well-known/est/", "/protected/")
+                            .replace("/.well-known/est", "/protected/")
+                        appendLog("Verifying mTLS with alias: $alias → $url")
+                        // Key lives in cert-manager process — delegate via AIDL
+                        val resId = context.resources.getIdentifier("est_validation_ca", "raw", context.packageName)
+                        val caPem = if (resId != 0) context.resources.openRawResource(resId).bufferedReader().use { it.readText() } else ""
+                        val raw = certManager.verifyMtls(alias, url, caPem)
+                        val code = raw.substringAfter("HTTP ").substringBefore("\n").trim().toIntOrNull() ?: 0
+                        val body = raw.substringAfter("\n")
+                        mtlsResult = MtlsResult(code, body, if (code == 200) "PASSED" else "FAILED")
+                        appendLog("mTLS result: HTTP $code — ${mtlsResult?.verdict}")
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
+            ) { Text("Verify mTLS (with cert)") }
+
+            Button(
+                onClick = {
+                    coroutineScope.launch(Dispatchers.IO) {
+                        mtlsResult = null
+                        val url = estUrl.replace("/.well-known/est/", "/protected/")
+                            .replace("/.well-known/est", "/protected/")
+                        appendLog("Verifying mTLS without cert → $url")
+                        mtlsResult = verifyMtls(context, url)
+                        appendLog("mTLS result: HTTP ${mtlsResult?.httpCode} — ${mtlsResult?.verdict}")
+                    }
+                }
+            ) { Text("Verify (no cert)") }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+
+        mtlsResult?.let { result ->
+            val passed = result.httpCode == 200
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (passed) MaterialTheme.colorScheme.primaryContainer
+                                     else MaterialTheme.colorScheme.errorContainer
+                )
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        if (passed) "mTLS PASSED  ✓  HTTP ${result.httpCode}"
+                        else        "mTLS FAILED  ✗  HTTP ${result.httpCode}",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(result.body, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
         Text("Execution Logs:", style = MaterialTheme.typography.titleSmall)
         Spacer(modifier = Modifier.height(8.dp))
         Card(
@@ -239,3 +310,39 @@ fun CertAppScreen(certManager: NiapCertManager) {
         }
     }
 }
+
+data class MtlsResult(val httpCode: Int, val body: String, val verdict: String)
+
+/** No-cert mTLS check — used only for the failure case (no client certificate) */
+fun verifyMtls(context: android.content.Context, url: String): MtlsResult {
+    return try {
+        val resId = context.resources.getIdentifier("est_validation_ca", "raw", context.packageName)
+        val caPem = if (resId != 0) context.resources.openRawResource(resId).bufferedReader().use { it.readText() } else ""
+        val cf = CertificateFactory.getInstance("X.509")
+        val caCert = cf.generateCertificate(caPem.byteInputStream()) as X509Certificate
+        val trustStore = KeyStore.getInstance(KeyStore.getDefaultType()).apply {
+            load(null, null)
+            setCertificateEntry("ca", caCert)
+        }
+        val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply { init(trustStore) }
+        val trustManager = tmf.trustManagers[0] as X509TrustManager
+
+        val sslContext = SSLContext.getInstance("TLS").apply {
+            init(emptyArray(), arrayOf(trustManager), null)
+        }
+        val client = OkHttpClient.Builder()
+            .sslSocketFactory(sslContext.socketFactory, trustManager)
+            .hostnameVerifier { _, _ -> true }
+            .build()
+
+        val response = client.newCall(Request.Builder().url(url).get().build()).execute()
+        val code = response.code
+        val body = response.body?.string()?.trim() ?: ""
+        Log.d("CertTestApp", "mTLS no-cert verify: HTTP $code\n$body")
+        MtlsResult(code, body, if (code == 200) "PASSED" else "FAILED")
+    } catch (e: Exception) {
+        Log.e("CertTestApp", "mTLS verify error: ${e.message}", e)
+        MtlsResult(0, e.message ?: e.javaClass.simpleName, "ERROR")
+    }
+}
+
