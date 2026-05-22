@@ -157,8 +157,8 @@ class CertManagerTest {
             // 4. Clear logcat before test
             client.execute(ShellCommandRequest("logcat -c"), serial)
 
-            // 5. Launch ManagerActivity in automation mode
-            val cmd = "am start -a android.intent.action.MAIN " +
+            // 5. Launch ManagerActivity in automation mode (clear-task ensures a fresh onCreate)
+            val cmd = "am start -a android.intent.action.MAIN --activity-clear-task " +
                 "-n com.example.niap.cert.ext.manager/com.android.niap.cert.service.ManagerActivity " +
                 "-e action enroll " +
                 "-e alias test_client_cert " +
@@ -167,14 +167,18 @@ class CertManagerTest {
                 "-e subjectDn CN=TestUser"
             client.execute(ShellCommandRequest(cmd), serial)
 
-            // 6. Wait for Fibonacci polling to complete (max ~15s)
-            Thread.sleep(15000)
+            // 6. Wait for enrollment to complete (service bind up to 10s + CA download + EST)
+            Thread.sleep(25000)
 
             // 7. Read relevant log lines
             val logcatResult = client.execute(ShellCommandRequest("logcat -d"), serial)
             val logcatOutput = String(logcatResult.stdout)
             workerLogsStr = logcatOutput.split("\n")
-                .filter { it.contains("ManagerActivity") || it.contains("EstClient") || it.contains("NiapCertOrchestrator") }
+                .filter {
+                    it.contains("ManagerActivity") || it.contains("EstClient") ||
+                    it.contains("NiapCertOrchestrator") || it.contains("NiapCertService") ||
+                    it.contains("NiapCertManager")
+                }
                 .joinToString("\n")
         }
         return TestResult(workerLogsStr)

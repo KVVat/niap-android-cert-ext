@@ -212,6 +212,29 @@ adb reverse tcp:8080 tcp:8080
 # then use https://localhost:8443/.well-known/est/ in the app
 ```
 
+### 8. Manual test with the cert-test-app (real device)
+
+Set up ADB port forwarding first (run on Mac each time you reconnect the device):
+
+```bash
+adb reverse tcp:8443 tcp:8443   # EST/HTTPS (NGINX → Mac)
+adb reverse tcp:8080 tcp:8080   # HTTP admin / CA cert download (NGINX → Mac)
+```
+
+App settings to use:
+
+| Field | Value |
+|-------|-------|
+| EST Server URL | `https://localhost:8443/.well-known/est/` |
+| Auth Token | `estuser:estpwd` |
+| CA PEM URL | `http://localhost:8080/cacert.pem` |
+| mTLS Endpoint | any endpoint requiring mTLS client auth |
+
+The app downloads the CA PEM automatically from the CA PEM URL on each Enroll attempt.
+Leave CA PEM URL blank only if you have embedded the CA cert as a raw resource (`est_validation_ca`) in the app.
+
+> **Note**: `adb reverse` must be re-run after every device reconnect (USB unplug/replug or `adb kill-server`).
+
 ---
 
 ## Troubleshooting
