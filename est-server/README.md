@@ -7,12 +7,11 @@
 >
 > | Option | Environment | EST enroll | mTLS test | Docker required |
 > |--------|------------|-----------|-----------|-----------------|
-> | **Cloud Run** (recommended) | Company device, any machine | ✅ | ❌ | No |
+> | **Cloud Run** | Company device, any machine | ✅ | ❌ | No |
 > | **Cloud Run + LB** | Company GCP with budget | ✅ | ✅ | No |
 > | **Local Docker** | Personal dev machine only | ✅ | ✅ | Yes |
 >
-> In environments where local VMs/Docker are not permitted (e.g. managed company devices),
-> Cloud Run is the only viable path. `gcloud run deploy --source .` builds on Google Cloud Build —
+> `gcloud run deploy --source .` builds on Google Cloud Build —
 > no local Docker installation required.
 
 ---
