@@ -11,7 +11,8 @@ services:
     image: est-validation-server:local
     container_name: est-validation-server
     ports:
-      - "8443:8443"   # EST endpoints (HTTPS + mTLS)
+      - "8443:8443"   # EST endpoints (HTTPS + mTLS optional)
+      - "8081:8081"   # mTLS test endpoint (HTTPS + mTLS required)
       - "8080:8080"   # Admin HTTP (CA cert download, health check)
     environment:
       - TZ=Asia/Tokyo

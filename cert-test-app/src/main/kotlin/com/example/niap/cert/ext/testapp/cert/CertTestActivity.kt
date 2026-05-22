@@ -66,7 +66,7 @@ fun CertAppScreen(certManager: NiapCertManager) {
     var authToken   by remember { mutableStateOf(prefs.getString("authToken",    "estuser:estpwd")!!) }
     var subjectDn   by remember { mutableStateOf(prefs.getString("subjectDn",    "CN=TestUser")!!) }
     var caPemUrl    by remember { mutableStateOf(prefs.getString("caPemUrl",     "http://localhost:8080/cacert.pem")!!) }
-    var mtlsEndpoint by remember { mutableStateOf(prefs.getString("mtlsEndpoint", "https://localhost:8443/protected/")!!) }
+    var mtlsEndpoint by remember { mutableStateOf(prefs.getString("mtlsEndpoint", "https://localhost:8081/protected/")!!) }
 
     fun savePrefs() {
         prefs.edit()
@@ -170,7 +170,12 @@ fun CertAppScreen(certManager: NiapCertManager) {
                     status       = "ENROLLING"
                     val caPem = loadCaPem()
                     appendLog("CA PEM: ${caPem.length} bytes")
-                    val req = EnrollmentRequest(alias, estUrl, authToken, subjectDn, trustedCaPem = caPem)
+                    // Use custom CA as TLS trust anchor only for self-signed servers (localhost / private IP).
+                    // Public endpoints (Cloud Run etc.) use the system trust store.
+                    val isPrivate = estUrl.contains("localhost") || estUrl.contains("10.0.2.2") || estUrl.contains("192.168.")
+                    val trustAnchor = if (isPrivate) caPem else ""
+                    if (!isPrivate) appendLog("Public EST URL — using system trust store")
+                    val req = EnrollmentRequest(alias, estUrl, authToken, subjectDn, trustedCaPem = trustAnchor)
                     try {
                         val certBytes = certManager.enroll(req).get(30, java.util.concurrent.TimeUnit.SECONDS)
                         status = "READY"

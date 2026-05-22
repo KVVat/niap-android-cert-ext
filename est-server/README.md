@@ -1,9 +1,19 @@
 # EST Validation Server — Setup Guide
 
-> **Purpose**: Local EST (Enrollment over Secure Transport) server for testing NIAP / Common Criteria
-> Android certificate enrollment. Runs entirely in Docker — no external services or cloud costs required.
+> **Purpose**: EST (Enrollment over Secure Transport) server for testing NIAP / Common Criteria
+> Android certificate enrollment. Cisco libest + NGINX in a single container.
 >
-> **Architecture**: Cisco libest + NGINX in a single self-contained Docker container.
+> **Deployment options:**
+>
+> | Option | Environment | EST enroll | mTLS test | Docker required |
+> |--------|------------|-----------|-----------|-----------------|
+> | **Cloud Run** (recommended) | Company device, any machine | ✅ | ❌ | No |
+> | **Cloud Run + LB** | Company GCP with budget | ✅ | ✅ | No |
+> | **Local Docker** | Personal dev machine only | ✅ | ✅ | Yes |
+>
+> In environments where local VMs/Docker are not permitted (e.g. managed company devices),
+> Cloud Run is the only viable path. `gcloud run deploy --source .` builds on Google Cloud Build —
+> no local Docker installation required.
 
 ---
 
@@ -12,14 +22,18 @@
 ```
 Android device / emulator
     │
-    │ HTTPS (mTLS) :8443
+    │ HTTPS (mTLS optional) :8443   ← EST protocol
+    │ HTTPS (mTLS required) :8081   ← mTLS test endpoint
     ▼
 ┌─────────────────────────────────────────┐
 │ Docker container                        │
 │                                         │
-│  NGINX :8443 (HTTPS + mTLS)             │
+│  NGINX :8443 (HTTPS + mTLS optional)    │
 │    └─ proxy ──▶ libest :8085            │
 │                   └─ issues certs (CA)  │
+│                                         │
+│  NGINX :8081 (HTTPS + mTLS required)    │
+│    └─ /protected/  ← mTLS test          │
 │                                         │
 │  NGINX :8080 (HTTP)                     │
 │    └─ /cacert.pem  ← CA cert download   │
@@ -40,6 +54,23 @@ A throwaway Root CA is auto-generated on first container start. This CA:
 ---
 
 ## Prerequisites
+
+### Cloud Run deployment (no Docker needed)
+
+| Tool | Check |
+|------|-------|
+| gcloud CLI | `gcloud version` |
+| GCP project with billing enabled | — |
+
+```bash
+# Install gcloud (macOS)
+brew install --cask google-cloud-sdk
+# Add to ~/.zshrc: export PATH=/opt/homebrew/share/google-cloud-sdk/bin:"$PATH"
+gcloud auth login
+gcloud config set project <YOUR_PROJECT_ID>
+```
+
+### Local Docker (personal dev machine only)
 
 | Tool | Version | Check |
 |------|---------|-------|
@@ -218,6 +249,7 @@ Set up ADB port forwarding first (run on Mac each time you reconnect the device)
 
 ```bash
 adb reverse tcp:8443 tcp:8443   # EST/HTTPS (NGINX → Mac)
+adb reverse tcp:8081 tcp:8081   # mTLS test endpoint (NGINX → Mac)
 adb reverse tcp:8080 tcp:8080   # HTTP admin / CA cert download (NGINX → Mac)
 ```
 
@@ -228,7 +260,7 @@ App settings to use:
 | EST Server URL | `https://localhost:8443/.well-known/est/` |
 | Auth Token | `estuser:estpwd` |
 | CA PEM URL | `http://localhost:8080/cacert.pem` |
-| mTLS Endpoint | any endpoint requiring mTLS client auth |
+| mTLS Endpoint | `https://localhost:8081/protected/` |
 
 The app downloads the CA PEM automatically from the CA PEM URL on each Enroll attempt.
 Leave CA PEM URL blank only if you have embedded the CA cert as a raw resource (`est_validation_ca`) in the app.
@@ -309,14 +341,162 @@ docker compose down --rmi local
 
 ## Cloud Run Deployment (optional)
 
-> **Note**: Cloud Run does not natively support mTLS (TLS is terminated by Cloud Run).
-> For mTLS, use Cloud Load Balancer's mTLS feature (additional cost).
-> For basic EST flow verification, `ssl_verify_client optional` is sufficient.
+### Current test environment
+
+| Endpoint | URL |
+|----------|-----|
+| CA cert | `https://est-validation-server-521494782913.asia-northeast1.run.app/cacert.pem` |
+| Health | `https://est-validation-server-521494782913.asia-northeast1.run.app/health` |
+| EST enroll | `https://est-validation-server-521494782913.asia-northeast1.run.app/.well-known/est/` |
+| Auth | `estuser:estpwd` |
+
+GCP project: `niap-est-test` / region: `asia-northeast1`
+
+> **Note on TLS trust**: Cloud Run presents a Google-signed certificate. When using this endpoint
+> from the Android app, leave CA PEM URL blank or do not apply the downloaded CA cert as the TLS
+> trust anchor — use the system trust store instead. The CA PEM is still needed to validate issued
+> client certificates.
+
+---
+
+### Architecture and limitations
+
+Cloud Run terminates TLS at Google's infrastructure before the request reaches the container.
+As a result:
+
+| Feature | Cloud Run only | Cloud Run + LB |
+|---------|---------------|----------------|
+| EST enroll (`/simpleenroll`) | ✅ | ✅ |
+| CA cert download (`/cacert.pem`) | ✅ | ✅ |
+| mTLS test (`/protected/`) | ❌ | ✅ |
+
+**Why mTLS does not work on Cloud Run alone:**
+The client certificate is stripped at the Cloud Run proxy — nginx inside the container never
+receives it, so `ssl_verify_client` has no effect.
+
+---
+
+### Option A: Cloud Run only (EST enroll, no mTLS test)
+
+This is the current setup. **Local Docker is not required** — `gcloud run deploy --source .`
+builds the container on Google Cloud Build, so deployment works from any machine with the
+gcloud CLI installed (including company devices where Docker is unavailable).
+
+For Android app configuration when using Cloud Run:
+- EST Server URL: `https://<service-url>/.well-known/est/`
+- CA PEM URL: leave blank (Cloud Run presents a Google-signed cert; system trust store is used)
+- mTLS endpoint: requires local Docker or Option B (Cloud LB)
+
+---
+
+### Option B: Cloud Run + Cloud Load Balancer (full mTLS on cloud) — requires budget approval
+
+> This option is documented for reference when deploying to a company GCP environment with
+> an approved budget. The LB forwarding rule incurs a fixed charge (~$18/month) regardless
+> of traffic volume — not suitable for personal accounts or short-term validation.
+
+Add a Cloud Load Balancer in front of Cloud Run to perform mTLS termination.
+The LB verifies the client certificate and forwards cert info as an HTTP header
+(`X-Forwarded-Client-Cert`) to Cloud Run, where nginx reads it.
+
+```
+Android device
+    │ HTTPS + client cert (mTLS)
+    ▼
+Cloud Load Balancer
+    │ - Verifies client cert against EST CA
+    │ - Adds X-Forwarded-Client-Cert header
+    ▼
+Cloud Run :8080
+    │
+    ▼
+nginx /protected/
+    - Checks X-Forwarded-Client-Cert header
+    - 200 if present, 401 if absent
+```
+
+#### nginx change for `/protected/` on port 8080
+
+```nginx
+location /protected/ {
+    if ($http_x_forwarded_client_cert = "") {
+        return 401 "mTLS required\n";
+    }
+    add_header Content-Type "text/plain";
+    return 200 "mTLS OK\nClient-Cert: $http_x_forwarded_client_cert\n";
+}
+```
+
+#### Cloud LB setup
 
 ```bash
-gcloud auth login
-gcloud config set project <YOUR_PROJECT_ID>
+# 1. Create a serverless NEG for Cloud Run
+gcloud compute network-endpoint-groups create est-neg \
+    --region=asia-northeast1 \
+    --network-endpoint-type=serverless \
+    --cloud-run-service=est-validation-server
 
+# 2. Create backend service
+gcloud compute backend-services create est-backend \
+    --load-balancing-scheme=EXTERNAL_MANAGED \
+    --global
+
+gcloud compute backend-services add-backend est-backend \
+    --network-endpoint-group=est-neg \
+    --network-endpoint-group-region=asia-northeast1 \
+    --global
+
+# 3. Create URL map, HTTPS proxy, forwarding rule
+gcloud compute url-maps create est-url-map --default-service=est-backend
+gcloud compute ssl-certificates create est-cert --domains=<YOUR_DOMAIN>
+gcloud compute target-https-proxies create est-https-proxy \
+    --url-map=est-url-map \
+    --ssl-certificates=est-cert
+gcloud compute forwarding-rules create est-forwarding-rule \
+    --load-balancing-scheme=EXTERNAL_MANAGED \
+    --target-https-proxy=est-https-proxy \
+    --global --ports=443
+
+# 4. Enable mTLS: upload EST CA cert as trust config
+gcloud certificate-manager trust-configs create est-trust-config \
+    --location=global \
+    --ca-certs=<(curl -s https://<service-url>/cacert.pem)
+
+gcloud compute target-https-proxies update est-https-proxy \
+    --server-tls-policy=... # attach trust config via server TLS policy
+```
+
+> Once approved and deployed, this setup enables full cloud-based mTLS testing without
+> requiring Docker on the test device.
+
+---
+
+### Prerequisites (first-time setup)
+
+1. Create a GCP project and enable billing
+2. Install and configure gcloud CLI:
+   ```bash
+   brew install --cask google-cloud-sdk
+   # Add to ~/.zshrc:
+   # export PATH=/opt/homebrew/share/google-cloud-sdk/bin:"$PATH"
+   source ~/.zshrc
+   gcloud auth login
+   gcloud config set project <YOUR_PROJECT_ID>
+   ```
+3. Grant required IAM permissions to the default Compute Engine service account
+   (needed once per project — Cloud Run source deploy requires these):
+   ```bash
+   SA="<PROJECT_NUMBER>-compute@developer.gserviceaccount.com"
+   gcloud projects add-iam-policy-binding <YOUR_PROJECT_ID> --member="serviceAccount:$SA" --role="roles/cloudbuild.builds.builder"
+   gcloud projects add-iam-policy-binding <YOUR_PROJECT_ID> --member="serviceAccount:$SA" --role="roles/storage.objectAdmin"
+   gcloud projects add-iam-policy-binding <YOUR_PROJECT_ID> --member="serviceAccount:$SA" --role="roles/artifactregistry.writer"
+   ```
+   > Find your project number: `gcloud projects describe <YOUR_PROJECT_ID> --format="value(projectNumber)"`
+
+### Deploy
+
+```bash
+cd est-server
 gcloud run deploy est-validation-server \
     --source . \
     --region asia-northeast1 \
@@ -327,9 +507,10 @@ gcloud run deploy est-validation-server \
 ```
 
 After deployment:
-- Only NGINX port 8080 (HTTP) is exposed by Cloud Run (Cloud Run adds HTTPS)
-- CA cert available at `https://<service-url>/cacert.pem`
-- Basic `/cacerts` and `/simpleenroll` flows work without mTLS
+- CA cert: `https://<service-url>/cacert.pem`
+- Health: `https://<service-url>/health`
+- EST enroll: `https://<service-url>/.well-known/est/`
+- mTLS test (`/protected/`): requires Cloud LB (Option B) or local Docker
 
 ---
 

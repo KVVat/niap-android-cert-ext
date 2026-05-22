@@ -328,10 +328,11 @@ log "EST server startup confirmed."
 # =============================================================================
 log "=================================================="
 log " Starting NGINX [profile: ${PROFILE}]"
-log "  EST  (HTTPS + mTLS): https://localhost:8443/.well-known/est/"
-log "  Admin (HTTP):        http://localhost:8080/"
-log "  CA cert:             http://localhost:8080/cacert.pem"
-log "  Health check:        http://localhost:8080/health"
+log "  EST  (HTTPS + mTLS optional): https://localhost:8443/.well-known/est/"
+log "  mTLS test (HTTPS + mTLS req): https://localhost:8081/protected/"
+log "  Admin (HTTP):                 http://localhost:8080/"
+log "  CA cert:                      http://localhost:8080/cacert.pem"
+log "  Health check:                 http://localhost:8080/health"
 log "=================================================="
 
 exec nginx -g 'daemon off;'
