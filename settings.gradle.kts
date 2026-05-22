@@ -20,4 +20,5 @@ include(":agent-test")
 include(":cert-test-app")
 
 include(":common-utils")
-project(":common-utils").projectDir = file("/Users/kwatanabe/work-repo/testbedui-plugins/common-utils")
+project(":common-utils").projectDir = file("../testbedui-plugins/common-utils")
+

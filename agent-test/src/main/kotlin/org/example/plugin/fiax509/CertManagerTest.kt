@@ -73,12 +73,11 @@ class CertManagerTest {
     fun testEnrollAndVerifyMtls() {
         log("Starting testEnrollAndVerifyMtls: enroll then verify mTLS with enrolled certificate")
         val serial = adb.deviceSerial
-        val repoRoot = "/Users/kwatanabe/AndroidStudioProjects/niap-android-cert-ext"
         var mtlsLogs = ""
 
         runBlocking {
             // 1. Install latest APK
-            val serviceApk = File("$repoRoot/cert-manager/build/outputs/apk/debug/cert-manager-debug.apk")
+            val serviceApk = File(JUnitBridge.resourceDir, "cert-manager-debug.apk")
             val retService = AdamUtils.installApk(client, serial, serviceApk, true)
             Assert.assertTrue("Failed to install service app: $retService", retService.startsWith("Success"))
 
@@ -133,11 +132,10 @@ class CertManagerTest {
     private fun runEnrollTest(): TestResult {
         var workerLogsStr: String = ""
         val serial = adb.deviceSerial
-        val repoRoot = "/Users/kwatanabe/AndroidStudioProjects/niap-android-cert-ext"
 
         runBlocking {
             // 1. Install Service APK
-            val serviceApk = File("$repoRoot/cert-manager/build/outputs/apk/debug/cert-manager-debug.apk")
+            val serviceApk = File(JUnitBridge.resourceDir, "cert-manager-debug.apk")
             val retService = AdamUtils.installApk(client, serial, serviceApk, true)
             Assert.assertTrue("Failed to install service app: $retService", retService.startsWith("Success"))
 

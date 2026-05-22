@@ -186,7 +186,48 @@ curl -sk \
 # → subject=CN=test-client
 ```
 
+### 4.5. Test the mTLS endpoint manually (curl)
+
+Once you have successfully enrolled a client certificate in the previous step, you can verify the mTLS enforcement endpoint on port `8081` using standard command line tools.
+
+1. **Extract the client certificate to a PEM file**:
+   ```bash
+   # Convert the returned PKCS#7 bundle from simpleenroll into standard PEM format
+   curl -sk \
+       --cacert <(curl -s http://localhost:8080/cacert.pem) \
+       -u "estuser:estpwd" \
+       -H "Content-Type: application/pkcs10" \
+       --data-binary @/tmp/client.csr \
+       https://localhost:8443/.well-known/est/simpleenroll \
+       | openssl base64 -d | openssl pkcs7 -inform DER -print_certs -out /tmp/client.crt
+   ```
+
+2. **Verify the issued certificate meets NIAP requirements (SHA-384 / ECDSA P-384 / clientAuth)**:
+   ```bash
+   openssl x509 -in /tmp/client.crt -noout -text | grep -E "Signature Algorithm|Public Key Algorithm|ASN1 OID|Extended Key Usage" -A 1
+   # Expected Output:
+   #   Signature Algorithm: ecdsa-with-SHA384
+   #   Public Key Algorithm: id-ecPublicKey
+   #       ASN1 OID: secp384r1
+   #   Extended Key Usage:
+   #       TLS Web Client Authentication
+   ```
+
+3. **Establish an mTLS session using the issued client key and cert**:
+   ```bash
+   curl -v -k --cacert <(curl -s http://localhost:8080/cacert.pem) \
+       --key /tmp/client.key \
+       --cert /tmp/client.crt \
+       https://localhost:8081/protected/
+   
+   # Expected HTTP Response: 200 OK
+   # Body output should contain:
+   #   mTLS OK
+   #   Client: C=JP, ST=Tokyo, O=NIAP Test Lab, CN=test-client
+   ```
+
 ---
+
 
 ## Switching to NIAP Profile
 
@@ -514,7 +555,28 @@ After deployment:
 
 ---
 
+## Packet Capture (PCAP) for NIAP/CC Verification
+
+To provide cryptographic verification of the TLS and mTLS handshakes (e.g., confirming TLS 1.3 usage, client cert submission, and SHA-384 algorithms in TLS 1.2 `CertificateVerify`), evaluators can record traffic within the container using `tcpdump`.
+
+1. **Start packet capture on target interfaces inside the container**:
+   ```bash
+   docker exec -it est-validation-server tcpdump -i any -w /opt/estserver/handshake.pcap "port 8443 or port 8081"
+   ```
+
+2. **Execute your test case** (either through `curl` or the Android client app).
+
+3. **Stop the capture** with `Ctrl+C`.
+
+4. **Copy the PCAP file to the host machine for Wireshark analysis**:
+   ```bash
+   docker cp est-validation-server:/opt/estserver/handshake.pcap ./handshake.pcap
+   ```
+
+---
+
 ## File Layout
+
 
 ```
 est-server/

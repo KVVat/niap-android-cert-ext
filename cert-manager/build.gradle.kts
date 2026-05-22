@@ -50,3 +50,33 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.8.2")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
 }
+
+// --- Auto-Copy APK to TestBed Core Resources ---
+tasks.register<Copy>("copyApkToCore") {
+    description = "Copies the generated APK to the TestBed Core resources directory."
+
+    // Source: The output of the assembleDebug task
+    from(layout.buildDirectory.dir("outputs/apk/debug"))
+    include("*-debug.apk")
+
+    // Destination: ../testbed-core/composeApp/resources/
+    val coreResourcesDir = file("${rootProject.projectDir}/../testbed-core/composeApp/resources")
+    if (!coreResourcesDir.exists()) {
+        coreResourcesDir.mkdirs()
+    }
+    into(coreResourcesDir)
+
+    rename { "cert-manager-debug.apk" }
+
+    doLast {
+        println("✅ APK copied to: ${coreResourcesDir.absolutePath}")
+    }
+}
+
+tasks.configureEach {
+    if (name == "assemble" || name == "assembleDebug") {
+        finalizedBy("copyApkToCore")
+    }
+}
+
+
