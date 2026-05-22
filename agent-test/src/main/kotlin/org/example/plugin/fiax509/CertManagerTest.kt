@@ -41,6 +41,7 @@ class CertManagerTest {
         @JvmStatic
         fun setupCheckList() {
             SFRCheckList.register("FIA_XCU_EXT.2.1", "Verify certificate acquisition via EST")
+            SFRCheckList.register("FIA_XCU_EXT.2.2", "Verify mTLS client authentication with enrolled certificate")
         }
     }
 
@@ -66,6 +67,67 @@ class CertManagerTest {
         // Expect complete workflow success ending in READY state
         errs.checkThat(a.msg("EST enrollment workflow should complete and enter READY state"), resp.workerLogs.contains("READY"), IsEqual(true))
         SFRCheckList.pass("FIA_XCU_EXT.2.1")
+    }
+
+    @Test
+    fun testEnrollAndVerifyMtls() {
+        log("Starting testEnrollAndVerifyMtls: enroll then verify mTLS with enrolled certificate")
+        val serial = adb.deviceSerial
+        val repoRoot = "/Users/kwatanabe/AndroidStudioProjects/niap-android-cert-ext"
+        var mtlsLogs = ""
+
+        runBlocking {
+            // 1. Install latest APK
+            val serviceApk = File("$repoRoot/cert-manager/build/outputs/apk/debug/cert-manager-debug.apk")
+            val retService = AdamUtils.installApk(client, serial, serviceApk, true)
+            Assert.assertTrue("Failed to install service app: $retService", retService.startsWith("Success"))
+
+            // 2. ADB reverse port forwarding
+            try {
+                Runtime.getRuntime().exec(arrayOf("adb", "-s", serial, "reverse", "tcp:8443", "tcp:8443")).waitFor()
+                Runtime.getRuntime().exec(arrayOf("adb", "-s", serial, "reverse", "tcp:8080", "tcp:8080")).waitFor()
+                log("ADB reverse configured")
+            } catch (e: Exception) {
+                log("Warning: adb reverse failed: ${e.message}")
+            }
+
+            // 3. Clear logcat and enroll
+            client.execute(ShellCommandRequest("logcat -c"), serial)
+            val enrollCmd = "am start -a android.intent.action.MAIN " +
+                "-n com.example.niap.cert.ext.manager/com.android.niap.cert.service.ManagerActivity " +
+                "-e action enroll -e alias test_client_cert " +
+                "-e estUrl https://localhost:8443/.well-known/est/ " +
+                "-e authToken estuser:estpwd -e subjectDn CN=TestUser"
+            client.execute(ShellCommandRequest(enrollCmd), serial)
+            Thread.sleep(15000)
+
+            val enrollLogs = String(client.execute(ShellCommandRequest("logcat -d"), serial).stdout)
+            val enrolled = enrollLogs.contains("Enrollment succeeded: READY")
+            Assert.assertTrue("Enrollment must succeed before mTLS test", enrolled)
+            log("Enrollment confirmed: READY")
+
+            // 4. Clear logcat and run mTLS verification
+            client.execute(ShellCommandRequest("logcat -c"), serial)
+            val mtlsCmd = "am start -a android.intent.action.MAIN --activity-clear-task " +
+                "-n com.example.niap.cert.ext.manager/com.android.niap.cert.service.ManagerActivity " +
+                "-e action verifyMtls -e alias test_client_cert " +
+                "-e protectedUrl https://localhost:8443/protected/"
+            client.execute(ShellCommandRequest(mtlsCmd), serial)
+            Thread.sleep(10000)
+
+            val logcatResult = client.execute(ShellCommandRequest("logcat -d"), serial)
+            mtlsLogs = String(logcatResult.stdout).split("\n")
+                .filter { it.contains("ManagerActivity") || it.contains("NiapCertManager") }
+                .joinToString("\n")
+        }
+
+        log("mTLS logs: $mtlsLogs")
+        errs.checkThat(
+            a.msg("mTLS should return HTTP 200 with enrolled certificate"),
+            mtlsLogs.contains("MTLS_RESULT: HTTP 200"),
+            IsEqual(true)
+        )
+        SFRCheckList.pass("FIA_XCU_EXT.2.2")
     }
 
     private fun runEnrollTest(): TestResult {

@@ -39,4 +39,8 @@ data class EnrollmentRequest(
     val validatorConfig: ValidatorConfig = ValidatorConfig()
 )
 
+/** Thrown via the enroll() future on enrollment failure (network, validation, etc.). */
+class EnrollmentException(message: String) : Exception(message)
 
+/** Thrown via the revoke() future on revocation failure. */
+class RevocationException(message: String) : Exception(message)

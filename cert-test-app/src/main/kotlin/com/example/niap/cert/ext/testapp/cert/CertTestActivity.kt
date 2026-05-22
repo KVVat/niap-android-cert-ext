@@ -15,7 +15,6 @@ import androidx.compose.ui.unit.dp
 import com.android.niap.cert.manager.EnrollmentRequest
 import com.android.niap.cert.manager.NiapCertManager
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -49,7 +48,7 @@ class CertTestActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        certManager.unbindService()
+        certManager.close()
     }
 }
 
@@ -122,12 +121,8 @@ fun CertAppScreen(certManager: NiapCertManager) {
                     logMessages = emptyList()
                     certSummary = null
                     errorMessage = null
-                    status = "BINDING"
-                    appendLog("Binding to CertManagerService...")
-                    certManager.bindService()
-                    delay(1000)
-
                     status = "ENROLLING"
+
                     var caPem = ""
                     appendLog("Loading trusted CA certificate from local raw resource (est_validation_ca.pem)...")
                     try {
@@ -136,7 +131,7 @@ fun CertAppScreen(certManager: NiapCertManager) {
                             caPem = context.resources.openRawResource(resId).bufferedReader().use { it.readText() }
                             appendLog("Loaded ${caPem.length} bytes from local raw CA resource")
                         } else {
-                            appendLog("Warning: Local raw resource dstcax3 not found")
+                            appendLog("Warning: Local raw resource est_validation_ca not found")
                         }
                     } catch (e: Exception) {
                         appendLog("Warning: Failed to load raw CA: ${e.message}")
@@ -144,45 +139,29 @@ fun CertAppScreen(certManager: NiapCertManager) {
 
                     appendLog("Sending enrollment request for alias: $alias")
                     val request = EnrollmentRequest(alias, estUrl, authToken, subjectDn, trustedCaPem = caPem)
-                    certManager.requestCertificate(request)
-
-                    // Fibonacci polling
-                    val fib = listOf(1, 1, 2, 3, 5, 8, 13, 21, 34, 55)
-                    for ((i, f) in fib.withIndex()) {
-                        val waitTime = f * 250L
-                        delay(waitTime)
-                        val currentStatus = certManager.getCertificateStatus(alias)
-                        appendLog("Status check [${i+1}] (waited ${waitTime}ms): $alias = $currentStatus")
-                        status = currentStatus
-
-                        if (currentStatus == "READY" || currentStatus == "VALIDATION_FAILED" || currentStatus == "NETWORK_ERROR") {
-                            if (currentStatus != "READY") {
-                                val detail = certManager.getErrorMessage(alias)
-                                appendLog("Failure detail: $detail")
-                                errorMessage = detail
-                            } else {
-                                appendLog("Retrieving stored certificate data...")
-                                val certBytes = certManager.getCertificateData(alias)
-                                if (certBytes.isNotEmpty()) {
-                                    try {
-                                        val factory = CertificateFactory.getInstance("X.509")
-                                        val cert = factory.generateCertificate(ByteArrayInputStream(certBytes)) as X509Certificate
-                                        certSummary = """
-                                            Subject: ${cert.subjectDN}
-                                            Issuer: ${cert.issuerDN}
-                                            Serial: ${cert.serialNumber}
-                                            Algorithm: ${cert.sigAlgName}
-                                            Valid From: ${cert.notBefore}
-                                            Valid Until: ${cert.notAfter}
-                                        """.trimIndent()
-                                        appendLog("Certificate loaded successfully")
-                                    } catch (e: Exception) {
-                                        appendLog("Error parsing certificate: ${e.message}")
-                                    }
-                                }
-                            }
-                            break
-                        }
+                    try {
+                        val certBytes = certManager.enroll(request).get(30, java.util.concurrent.TimeUnit.SECONDS)
+                        status = "READY"
+                        val cert = CertificateFactory.getInstance("X.509")
+                            .generateCertificate(ByteArrayInputStream(certBytes)) as X509Certificate
+                        certSummary = """
+                            Subject: ${cert.subjectDN}
+                            Issuer: ${cert.issuerDN}
+                            Serial: ${cert.serialNumber}
+                            Algorithm: ${cert.sigAlgName}
+                            Valid From: ${cert.notBefore}
+                            Valid Until: ${cert.notAfter}
+                        """.trimIndent()
+                        appendLog("Certificate loaded successfully")
+                    } catch (e: java.util.concurrent.ExecutionException) {
+                        status = "FAILED"
+                        val detail = e.cause?.message ?: e.message ?: "Unknown error"
+                        appendLog("Enrollment failed: $detail")
+                        errorMessage = detail
+                    } catch (e: Exception) {
+                        status = "FAILED"
+                        appendLog("Enrollment error: ${e.message}")
+                        errorMessage = e.message
                     }
                 }
             }) {
@@ -190,12 +169,16 @@ fun CertAppScreen(certManager: NiapCertManager) {
             }
 
             Button(onClick = {
-                coroutineScope.launch {
+                coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                     appendLog("Sending revoke request for alias: $alias")
-                    certManager.revokeCertificate(alias)
-                    status = "REVOKED"
-                    certSummary = null
-                    errorMessage = null
+                    try {
+                        certManager.revoke(alias).get(15, java.util.concurrent.TimeUnit.SECONDS)
+                        status = "REVOKED"
+                        certSummary = null
+                        errorMessage = null
+                    } catch (e: Exception) {
+                        appendLog("Revoke failed: ${e.message}")
+                    }
                 }
             }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) {
                 Text("Revoke")
@@ -245,15 +228,35 @@ fun CertAppScreen(certManager: NiapCertManager) {
                         mtlsResult = null
                         val url = estUrl.replace("/.well-known/est/", "/protected/")
                             .replace("/.well-known/est", "/protected/")
-                        appendLog("Verifying mTLS with alias: $alias → $url")
-                        // Key lives in cert-manager process — delegate via AIDL
-                        val resId = context.resources.getIdentifier("est_validation_ca", "raw", context.packageName)
-                        val caPem = if (resId != 0) context.resources.openRawResource(resId).bufferedReader().use { it.readText() } else ""
-                        val raw = certManager.verifyMtls(alias, url, caPem)
-                        val code = raw.substringAfter("HTTP ").substringBefore("\n").trim().toIntOrNull() ?: 0
-                        val body = raw.substringAfter("\n")
-                        mtlsResult = MtlsResult(code, body, if (code == 200) "PASSED" else "FAILED")
-                        appendLog("mTLS result: HTTP $code — ${mtlsResult?.verdict}")
+                        appendLog("Verifying mTLS with alias: $alias → $url (standard OkHttp)")
+                        try {
+                            // === Standard JCA usage — no Service-specific API needed ===
+                            // Private key stays in cert-manager process; getSslContext()
+                            // wraps the signing oracle behind a normal SSLContext.
+                            val resId = context.resources.getIdentifier("est_validation_ca", "raw", context.packageName)
+                            val caPem = if (resId != 0) context.resources.openRawResource(resId).bufferedReader().use { it.readText() } else ""
+                            val sslCtx = certManager.getSslContext(alias, caPem)
+                            val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply {
+                                init(KeyStore.getInstance(KeyStore.getDefaultType()).apply {
+                                    load(null, null)
+                                    setCertificateEntry("ca", CertificateFactory.getInstance("X.509")
+                                        .generateCertificate(caPem.byteInputStream()) as X509Certificate)
+                                })
+                            }
+                            val tm = tmf.trustManagers[0] as X509TrustManager
+                            val client = OkHttpClient.Builder()
+                                .sslSocketFactory(sslCtx.socketFactory, tm)
+                                .hostnameVerifier { _, _ -> true }
+                                .build()
+                            val response = client.newCall(Request.Builder().url(url).get().build()).execute()
+                            val code = response.code
+                            val body = response.body?.string()?.trim() ?: ""
+                            mtlsResult = MtlsResult(code, body, if (code == 200) "PASSED" else "FAILED")
+                            appendLog("mTLS result: HTTP $code — ${mtlsResult?.verdict}")
+                        } catch (e: Exception) {
+                            appendLog("mTLS error: ${e.message}")
+                            mtlsResult = MtlsResult(0, e.message ?: e.javaClass.simpleName, "ERROR")
+                        }
                     }
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)

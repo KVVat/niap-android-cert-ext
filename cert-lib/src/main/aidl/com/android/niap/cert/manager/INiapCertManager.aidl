@@ -1,9 +1,16 @@
 package com.android.niap.cert.manager;
 
 import android.os.Bundle;
+import com.android.niap.cert.manager.IEnrollmentCallback;
+import com.android.niap.cert.manager.IRevocationCallback;
 
 interface INiapCertManager {
-    void requestCertificate(
+    /**
+     * Async enrollment with callback. Service invokes exactly one of
+     * callback.onSuccess(certData) or callback.onError(message).
+     * Replaces the old polling-based requestCertificate.
+     */
+    void enroll(
         String alias,
         String estServerUrl,
         String authToken,
@@ -12,13 +19,22 @@ interface INiapCertManager {
         String keyType,
         String sigAlg,
         String trustedCaPem,
-        in Bundle validatorConfig
+        in Bundle validatorConfig,
+        IEnrollmentCallback callback
     );
-    String getCertificateStatus(String alias);
+
+    /** Async revocation with callback. */
+    void revoke(String alias, IRevocationCallback callback);
+
+    /** Whether an enrollment for [alias] exists in the service KeyStore. */
+    boolean hasEnrollment(String alias);
+
+    /** Returns DER-encoded leaf certificate for [alias], or empty if none. */
     byte[] getCertificateData(String alias);
-    String getErrorMessage(String alias);
-    void revokeCertificate(String alias);
-    // Performs an mTLS request from the service process (which owns the private key)
-    // Returns "HTTP <code>\n<body>" or "ERROR\n<message>"
-    String verifyMtls(String alias, String protectedUrl, String trustedCaPem);
+
+    /**
+     * Signs pre-hashed digest bytes with the key bound to alias (NONEwithECDSA).
+     * The service acts as a signing oracle; callers own the TLS/HTTP flow.
+     */
+    byte[] sign(String alias, in byte[] digestBytes);
 }

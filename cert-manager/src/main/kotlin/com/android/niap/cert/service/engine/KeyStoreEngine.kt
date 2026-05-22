@@ -4,6 +4,7 @@ import android.util.Log
 import java.io.ByteArrayInputStream
 import java.security.KeyStore
 import java.security.PrivateKey
+import java.security.Signature
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 
@@ -77,5 +78,20 @@ class KeyStoreEngine {
             Log.e("KeyStoreEngine", "Failed to get certificate data from KeyStore", e)
         }
         return ByteArray(0)
+    }
+
+    /**
+     * Signs [digestBytes] with the AndroidKeyStore key bound to [alias] using NONEwithECDSA.
+     * Conscrypt passes a pre-computed digest for TLS CertificateVerify; the key must have
+     * DIGEST_NONE in its permitted digests (see CsrEngine).
+     */
+    fun sign(alias: String, digestBytes: ByteArray): ByteArray {
+        val key = keyStore.getKey(alias, null) as? PrivateKey
+            ?: throw IllegalStateException("No private key found for alias '$alias'")
+        return Signature.getInstance("NONEwithECDSA").run {
+            initSign(key)
+            update(digestBytes)
+            sign()
+        }
     }
 }
