@@ -1,64 +1,84 @@
-# エージェント実行のためのプロジェクト知見
+# Project Knowledge for Agent Execution
 
-## 1. TestBed Core (MCP サーバー) の起動と停止
-このプロジェクトでは、`testbed-core` が提供する MCP サーバー（`localhost:11452`）と通信して、デバイス情報を取得したり操作したりします。
-エージェントがツールを正常に利用するためには、事前に `testbed-core` デスクトップアプリが起動している必要があります。
+This document contains architectural context, workflows, and guidelines for LLM agents to develop, run, and verify security test cases in this repository.
 
-### 起動方法
-別ターミナルで `testbed-core` リポジトリのディレクトリに移動し、以下のコマンドを実行して起動します。
+---
+
+## 1. Starting and Stopping TestBed Core (MCP Server)
+This project integrates with a desktop-based automation runner and MCP server hosted by the `testbed-core` application on port `11452` (`localhost:11452`). The server must be active for the agent to interface with physical devices or emulators.
+
+### How to Start the Server
+Open a separate terminal window, navigate to the `testbed-core` repository directory, and start the desktop program:
 
 ```bash
 cd ../testbed-core
 ./gradlew :composeApp:run
 ```
 
-### 停止（キル）方法
-二重起動を防ぐため、またはポート競合（`Address already in use` 等）が発生した場合は、11452 番ポートを使用しているプロセスを特定して強制終了します。
-エージェントが自動作業する前にも、このコマンドでクリーンアップしてから起動すると安全です。
+### How to Stop (Kill) the Server
+To prevent port collisions, dual-instance conflicts, or general socket errors (`Address already in use`), identify and force-kill any running processes holding port `11452`. It is recommended to perform this cleanup before launching automated runs:
 
 ```bash
-# 11452ポートを使っているプロセスをキル
+# Force-kill processes listening on port 11452
 lsof -t -i :11452 | xargs kill -9
 ```
 
-## 2. ドキュメント (MDFPP-CC) の参照
-`testbed-core` と同様に、このリポジトリにも `docs`（実体は `KVVat/mdfpp-docs.git`）が Git サブモジュールとして追加されています。
-CC (Common Criteria) などのセキュリティドキュメントを参照して実装を進める場合は、`docs/MDFPP-CC/` 以下の Markdown ファイルを直接読み込んでください。
+---
 
-サブモジュールが空の場合や最新化したい場合は以下を実行します。
+## 2. Referencing Security Documents (MDFPP-CC)
+To ensure test accuracy and compliance with security requirements, review the target criteria documented under the `docs/` folder (such as [FIA_XCU_EXT.1.md](file:///Users/wkouki/AndroidStudioProjects/niap-android-cert-ext/docs/FIA_XCU_EXT.1.md) or related Common Criteria files). 
+
+If the document references are empty or need to be synchronized with the remote requirements repository, run:
+
 ```bash
+git submodule update --init --recursive
+```
 
-## 3. ドキュメント駆動のテスト開発（至上命題）
-このプロジェクト（`testbedui-plugins`）における最大の指針は、**セキュリティ要件ドキュメントに厳格に従ったテスト実装**です。
-- LLMエージェントは自律的にテストを記述する際、必ず事前に `docs/MDFPP-CC/` 以下のMarkdownファイルから該当する機能要件や評価基準（Test Case）を読み込んでください。
-- 実装するJUnitテストは、ドキュメントに定義されたPass/Fail判定基準に合致している必要があります。
+---
 
-## 4. テスト開発・実行ワークフロー
-LLMエージェントがテストを開発・実行する際は、以下のワークフローに従います。詳細は [reference/TOOL_USAGE.md](reference/TOOL_USAGE.md) を参照してください。
+## 3. Document-Driven Test Development (Supreme Directive)
+The core operating principle of this project is **strict adherence of test implementations to the security requirements documents**:
+* Before generating or modifying any JUnit test suites, the LLM agent **must** read the relevant functional requirements and test case evaluation criteria from the target files in the `docs/` folder.
+* The written JUnit test assertions must align perfectly with the Pass/Fail decision boundaries defined in the criteria.
 
-1. **ドキュメント参照**: `docs/` から要件を取得
-2. **コード生成**: `test-sample` 等にテストコードを追加。ログ出力は [reference/TEST_CONVENTIONS.md](reference/TEST_CONVENTIONS.md) の規約（`logi`, `logp` 等）に従う。
-3. **ビルドとロード**:
-   - `./gradlew :test-sample:jar` でビルド
-   - `junit_test_reload` でテストを反映
-4. **テスト実行と確認**:
-   - `junit_test_execute` で実行開始
-   - `junit_test_receive` を定期的に呼び出し、リアルタイムログと最終結果を取得
+---
 
-## 5. 実装済みツールと仕様
-以下のツールが `testbed-core` 側で実装されており、自律的なテスト実行が可能です。
+## 4. Test Development and Execution Workflow
+When developing and running security test suites, follow this structured workflow (refer to the main tool references for deeper API mechanics):
 
-- **`junit_test_reload`**: テストJARを再読み込み。
-- **`junit_test_list`**: ロードされたテストの一覧を返却。
-- **`junit_test_execute`**: クラス名とメソッド名を指定して実行。
-- **`junit_test_receive`**: 実行中のログ（`status: "Running"`）や完了後の結果（`status: "Finished"`, `Pass/Fail`, `stacktrace`）を構造化されたJSONで取得。
+1. **Requirements Reference**: Retrieve target specifications from the target documents in `docs/`.
+2. **Test Generation**: Author the Kotlin/Java test suites inside the `agent-test` module (e.g., under `org.example.plugin.fiax509`). Ensure all log entries adhere to the logging design patterns (using helpers like `logi` or `logp`).
+3. **Compilation and Loading**:
+   * Compile the JUnit plugin JAR:
+     ```bash
+     ./gradlew :agent-test:jar
+     ```
+   * Invoke the `junit_test_reload` MCP tool to notify the server and load the newly compiled test definitions.
+4. **Execution and Monitoring**:
+   * Trigger execution using the `junit_test_execute` MCP tool (passing target class and method arguments).
+   * Poll `junit_test_receive` to stream log messages in real-time and capture structural exit states (Pass/Fail reports and stack traces).
 
-> **Note**: 実行中のリアルタイムログ取得に対応しているため、長時間（2分以上）のテストでも `junit_test_receive` をポーリングすることで進捗を監視できます。
+---
 
-## 6. 待ち時間におけるタイマーの活用
-エージェントが「お待ちください」と発言した後は、バックグラウンド処理の完了や非同期処理の進行を待つために、原則として**60秒のタイマー（`schedule` ツール）を仕掛けてください**。
-これにより、無駄なポーリングの繰り返しを避けることができます。
+## 5. Automation MCP Tools & Specifications
+The following MCP tools are exposed by the `testbed-core` interface for automated workflow execution:
 
-## 7. ローカルESTテストサーバー（libest）の構築と起動
-テスト実行時に、実機の証明書発行（ESTプロトコル）をシミュレートするためのローカルESTサーバーの構築および起動方法については、[docs/EST_SERVER_SETUP.md](file:///Users/wkouki/AndroidStudioProjects/niap-android-cert-ext/docs/EST_SERVER_SETUP.md) を参照してください。
-特に Common Criteria / NIAP 要件に準拠するために、署名アルゴリズムを SHA-384 に設定する手順が含まれています。
+* **`junit_test_reload`**: Reloads and updates the JUnit plugin JAR context on the server.
+* **`junit_test_list`**: Returns a list of all current tests loaded in the environment (as a JSON array).
+* **`junit_test_execute`**: Accepts a class name and optional method identifier to begin execution.
+* **`junit_test_receive`**: Retrieves current logs (`status: "Running"`) or finalized structural details (`status: "Finished"`, Pass/Fail indicator, exception details).
+
+> [!NOTE]
+> `junit_test_receive` supports active streaming. For long-running operations (e.g., processes taking over 2 minutes), safely poll `junit_test_receive` to track task execution progress.
+
+---
+
+## 6. Utilizing Timers for Passive Wait States
+When the agent is required to enter a wait state (e.g. waiting for a compilation step, a background script, or multi-stage device deployments to complete), **always schedule a 60-second timer using the `schedule` tool** rather than generating repeated active prompt-and-response loops. This saves token budgets and resources.
+
+---
+
+## 7. Configuring the Local EST Test Server (libest)
+For testing security certificate acquisitions (EST protocol) and client-side mutual TLS actions, run a local mock container based on **Cisco libest** and NGINX (configured under `est-server/`).
+* See [est-server/README.md](file:///Users/wkouki/AndroidStudioProjects/niap-android-cert-ext/est-server/README.md) for full docker deployment guidelines.
+* Ensure the environment signature algorithm is configured to **SHA-384** (via `EST_CERT_PROFILE=niap`) to properly satisfy Common Criteria / NIAP verification criteria during automated runs.
