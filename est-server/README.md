@@ -62,9 +62,9 @@ A throwaway Root CA is auto-generated on first container start. This CA:
 | GCP project with billing enabled | — |
 
 ```bash
-# Install gcloud (macOS)
+# Install gcloud CLI (example for macOS via Homebrew)
 brew install --cask google-cloud-sdk
-# Add to ~/.zshrc: export PATH=/opt/homebrew/share/google-cloud-sdk/bin:"$PATH"
+# Add to profile (e.g., ~/.zshrc): export PATH=/opt/homebrew/share/google-cloud-sdk/bin:"$PATH"
 gcloud auth login
 gcloud config set project <YOUR_PROJECT_ID>
 ```
@@ -250,8 +250,8 @@ docker exec est-validation-server \
 
 ### 5. Download and deploy the CA cert
 
-The Android emulator reaches the host Mac at `10.0.2.2`. For a real device on USB,
-use the Mac's LAN IP or set up ADB port forwarding.
+The Android emulator reaches the host machine at `10.0.2.2`. For a real device on USB,
+use the host machine's LAN IP or set up ADB port forwarding.
 
 ```bash
 # Download CA cert
@@ -285,12 +285,12 @@ adb reverse tcp:8080 tcp:8080
 
 ### 8. Manual test with the cert-test-app (real device)
 
-Set up ADB port forwarding first (run on Mac each time you reconnect the device):
+Set up ADB port forwarding first (run on the host machine each time you reconnect the device):
 
 ```bash
-adb reverse tcp:8443 tcp:8443   # EST/HTTPS (NGINX → Mac)
-adb reverse tcp:8081 tcp:8081   # mTLS test endpoint (NGINX → Mac)
-adb reverse tcp:8080 tcp:8080   # HTTP admin / CA cert download (NGINX → Mac)
+adb reverse tcp:8443 tcp:8443   # EST/HTTPS (NGINX → Host)
+adb reverse tcp:8081 tcp:8081   # mTLS test endpoint (NGINX → Host)
+adb reverse tcp:8080 tcp:8080   # HTTP admin / CA cert download (NGINX → Host)
 ```
 
 App settings to use:
@@ -505,8 +505,9 @@ gcloud compute target-https-proxies update est-https-proxy \
 1. Create a GCP project and enable billing
 2. Install and configure gcloud CLI:
    ```bash
+   # Example for macOS via Homebrew; adjust for other OS platforms:
    brew install --cask google-cloud-sdk
-   # Add to ~/.zshrc:
+   # Add to profile configuration:
    # export PATH=/opt/homebrew/share/google-cloud-sdk/bin:"$PATH"
    source ~/.zshrc
    gcloud auth login

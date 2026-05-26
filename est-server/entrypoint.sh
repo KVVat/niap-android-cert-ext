@@ -180,7 +180,7 @@ keyUsage                = critical,digitalSignature
 #   serverAuth  (1.3.6.1.5.5.7.3.1)  — TLS server authentication (NiapCertValidator.kt)
 #   id-kp-cmcRA (1.3.6.1.5.5.7.3.28) — EST-specific requirement (FIA_XCU_EXT.1.md §5)
 extendedKeyUsage        = serverAuth,1.3.6.1.5.5.7.3.28
-# SAN: Android emulator access (10.0.2.2 = host Mac) and real device via host IP
+# SAN: Android emulator access (10.0.2.2 = host machine) and real device via host IP
 subjectAltName          = @san_names
 
 [ san_names ]
