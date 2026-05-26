@@ -3,6 +3,7 @@
 # Gradle
 .gradle/
 .kotlin/
+.claude/
 build/
 
 # IntelliJ IDEA
