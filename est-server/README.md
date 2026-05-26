@@ -381,17 +381,6 @@ docker compose down --rmi local
 
 ## Cloud Run Deployment (optional)
 
-### Current test environment
-
-| Endpoint | URL |
-|----------|-----|
-| CA cert | `https://est-validation-server-521494782913.asia-northeast1.run.app/cacert.pem` |
-| Health | `https://est-validation-server-521494782913.asia-northeast1.run.app/health` |
-| EST enroll | `https://est-validation-server-521494782913.asia-northeast1.run.app/.well-known/est/` |
-| Auth | `estuser:estpwd` |
-
-GCP project: `niap-est-test` / region: `asia-northeast1`
-
 > **Note on TLS trust**: Cloud Run presents a Google-signed certificate. When using this endpoint
 > from the Android app, leave CA PEM URL blank or do not apply the downloaded CA cert as the TLS
 > trust anchor — use the system trust store instead. The CA PEM is still needed to validate issued
