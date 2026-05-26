@@ -71,20 +71,25 @@ dependencies {
 }
 
 tasks.register<Copy>("copyApkToCore") {
-    description = "Copies the generated APK to the TestBed Core resources directory."
-    from(layout.buildDirectory.dir("outputs/apk/debug"))
-    include("*-debug.apk")
+    description = "Copies the generated APKs to the TestBed Core resources directory."
+    from(layout.buildDirectory.dir("outputs/apk"))
+    include("**/*-debug.apk")
     val coreResourcesDir = file("${rootProject.projectDir}/../testbed-core/composeApp/resources")
     if (!coreResourcesDir.exists()) {
         coreResourcesDir.mkdirs()
     }
     into(coreResourcesDir)
-    rename { "validator-test-app-debug.apk" }
+    eachFile {
+        path = name
+    }
+    includeEmptyDirs = false
     doLast {
-        println("✅ APK copied to: ${coreResourcesDir.absolutePath}")
+        println("✅ APKs copied to: ${coreResourcesDir.absolutePath}")
     }
 }
 
-tasks.named("assemble") {
-    finalizedBy("copyApkToCore")
+tasks.configureEach {
+    if (name == "assemble" || name == "assembleDebug" || name.startsWith("assemble")) {
+        finalizedBy("copyApkToCore")
+    }
 }

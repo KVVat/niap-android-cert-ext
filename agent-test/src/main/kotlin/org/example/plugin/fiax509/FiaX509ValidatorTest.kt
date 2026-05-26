@@ -108,7 +108,7 @@ class NiapValidatorTest {
 
         runBlocking {
             val apkName = "validator-test-app-$flavor-debug.apk"
-            val appApk = File("/Users/wkouki/AndroidStudioProjects/niap-android-cert-ext/validator-test-app/build/outputs/apk/$flavor/debug/$apkName")
+            val appApk = File(JUnitBridge.resourceDir, apkName)
             val ret = AdamUtils.installApk(client, serial, appApk, true)
             Assert.assertTrue("Failed to install test app: ${ret}", ret.startsWith("Success"))
 

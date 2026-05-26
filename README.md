@@ -219,5 +219,5 @@ Ensure the **TestBed Core** desktop application and MCP server is launched on `l
 
 ## 📄 License
 
-This project is licensed under the Apache License, Version 2.0 - see the [LICENSE](file:///Users/wkouki/AndroidStudioProjects/niap-android-cert-ext/LICENSE) file for details.
+This project is licensed under the Apache License, Version 2.0 - see the [LICENSE](LICENSE) file for details.
 

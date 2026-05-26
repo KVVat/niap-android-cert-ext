@@ -26,7 +26,7 @@ lsof -t -i :11452 | xargs kill -9
 ---
 
 ## 2. Referencing Security Documents (MDFPP-CC)
-To ensure test accuracy and compliance with security requirements, review the target criteria documented under the `docs/` folder (such as [FIA_XCU_EXT.1.md](file:///Users/wkouki/AndroidStudioProjects/niap-android-cert-ext/docs/FIA_XCU_EXT.1.md) or related Common Criteria files). 
+To ensure test accuracy and compliance with security requirements, review the target criteria documented under the `docs/` folder (such as [FIA_XCU_EXT.1.md](docs/FIA_XCU_EXT.1.md) or related Common Criteria files). 
 
 If the document references are empty or need to be synchronized with the remote requirements repository, run:
 
@@ -80,5 +80,5 @@ When the agent is required to enter a wait state (e.g. waiting for a compilation
 
 ## 7. Configuring the Local EST Test Server (libest)
 For testing security certificate acquisitions (EST protocol) and client-side mutual TLS actions, run a local mock container based on **Cisco libest** and NGINX (configured under `est-server/`).
-* See [est-server/README.md](file:///Users/wkouki/AndroidStudioProjects/niap-android-cert-ext/est-server/README.md) for full docker deployment guidelines.
+* See [est-server/README.md](est-server/README.md) for full docker deployment guidelines.
 * Ensure the environment signature algorithm is configured to **SHA-384** (via `EST_CERT_PROFILE=niap`) to properly satisfy Common Criteria / NIAP verification criteria during automated runs.
