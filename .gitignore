@@ -34,3 +34,9 @@ local.properties
 adb_key.*
 *.hprof
 bin/
+
+# Build binaries and archives
+*.zip
+*.img
+*.apk
+!poc_patch_for_26q2/CertManagerGoogle.apk

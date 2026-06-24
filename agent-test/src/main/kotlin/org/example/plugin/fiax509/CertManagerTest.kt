@@ -109,7 +109,7 @@ class CertManagerTest {
             // 3. Clear logcat and enroll
             client.execute(ShellCommandRequest("logcat -c"), serial)
             val enrollCmd = "am start -a android.intent.action.MAIN " +
-                "-n com.example.niap.cert.ext.manager/com.android.niap.cert.service.ManagerActivity " +
+                "-n com.android.niap.cert.service/com.android.niap.cert.service.ManagerActivity " +
                 "-e action enroll -e alias test_client_cert " +
                 "-e estUrl https://localhost:8443/.well-known/est/ " +
                 "-e authToken estuser:estpwd -e subjectDn CN=TestUser"
@@ -124,7 +124,7 @@ class CertManagerTest {
             // 4. Clear logcat and run mTLS verification
             client.execute(ShellCommandRequest("logcat -c"), serial)
             val mtlsCmd = "am start -a android.intent.action.MAIN --activity-clear-task " +
-                "-n com.example.niap.cert.ext.manager/com.android.niap.cert.service.ManagerActivity " +
+                "-n com.android.niap.cert.service/com.android.niap.cert.service.ManagerActivity " +
                 "-e action verifyMtls -e alias test_client_cert " +
                 "-e protectedUrl https://localhost:8443/protected/"
             client.execute(ShellCommandRequest(mtlsCmd), serial)
@@ -173,7 +173,7 @@ class CertManagerTest {
 
             // 5. Launch ManagerActivity in automation mode (clear-task ensures a fresh onCreate)
             val cmd = "am start -a android.intent.action.MAIN --activity-clear-task " +
-                "-n com.example.niap.cert.ext.manager/com.android.niap.cert.service.ManagerActivity " +
+                "-n com.android.niap.cert.service/com.android.niap.cert.service.ManagerActivity " +
                 "-e action enroll " +
                 "-e alias test_client_cert " +
                 "-e estUrl https://localhost:8443/.well-known/est/ " +

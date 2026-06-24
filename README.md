@@ -11,9 +11,14 @@ By default, Android's core security provider (**Conscrypt**) is optimized for ge
 * It does not mandate essential extensions like Authority Key Identifier (AKID), Subject Key Identifier (SKID), or specific Key Usages.
 * It does not strictly restrict wildcard SAN alignments on critical Top-Level Domains (TLDs).
 
-This framework addresses these gaps by providing:
-1. **A strict validation layer** (`cert-lib`) that seamlessly overrides standard SSL trust behaviors.
-2. **A secure, hardware-backed certificate manager service** (`cert-manager`) supporting standardized protocols like **EST (Enrollment over Secure Transport)** for acquiring and managing enterprise/government-issued credentials while keeping private key material safely isolated in secure hardware.
+This framework addresses these gaps through a dual-mode integration architecture:
+
+1. **OS-Level Platform Integration (Preferred / Custom OS)**:
+   * By applying the platform patches provided in the [poc_patch_for_26q2/](file:///usr/local/google/home/wkouki/AndroidStudioProjects/niap-android-cert-ext/poc_patch_for_26q2/) directory to AOSP 26Q2, the validation constraints and client EST certificate selection/signing are handled **automatically and transparently by the Android OS** (Conscrypt).
+   * Third-party applications simply configure the `<security-profile name="niap-strict">` and `<est-server>` parameters in their standard `network-security-config.xml`. Zero source code changes or SDK integrations are needed.
+2. **App-Level Fallback Library (`cert-lib` / Stock OS)**:
+   * When deploying on standard, uncustomized Android devices (where modifying the OS/APEX is not possible), apps can bundle the `cert-lib` client library.
+   * `cert-lib` manually implements the same strict validation criteria and provides standard JSSE wrappers (`NiapKeyManager`, `NiapX509TrustManager`) to enforce the rules and route signing operations.
 
 ---
 

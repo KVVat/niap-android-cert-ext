@@ -31,9 +31,12 @@ dependencyResolutionManagement {
 rootProject.name = "niap-android-cert-ext"
 include(":cert-lib")
 include(":cert-manager")
+include(":cert-manager-system")
 include(":validator-test-app")
 include(":agent-test")
 include(":cert-test-app")
+include(":cert-testapp-system")
+include(":strict-browser-app")
 
 include(":common-utils")
 project(":common-utils").projectDir = file("../testbedui-plugins/common-utils")

@@ -1,0 +1,1653 @@
+diff --git a/Android.bp b/Android.bp
+index c309c7891..0e0f7de96 100644
+--- a/Android.bp
++++ b/Android.bp
+@@ -666,6 +666,7 @@ java_sdk_library {
+     ],
+     static_libs: [
+         "android.security.flags-aconfig-java-export",
++        "niap-cert-manager-aidl",
+     ],
+     jarjar_rules: "conscrypt-nsc-jarjar-rules.txt",
+ 
+@@ -677,6 +678,7 @@ java_sdk_library {
+     permitted_packages: [
+         "android.security",
+         "com.android.org.conscrypt.net.flags",
++        "com.android.niap.cert.manager",
+     ],
+     aconfig_declarations: [
+         "networksecurity-aconfig-flags",
+@@ -1129,3 +1131,29 @@ genrule {
+     cmd: "$(location flatc) -o $(genDir) --java $(in) " +
+         "&& $(location soong_zip) -o $(out) -C $(genDir) -D $(genDir)",
+ }
++
++java_library {
++    name: "niap-cert-manager-aidl",
++    srcs: [
++        "nsc/src/com/android/niap/cert/manager/**/*.aidl",
++    ],
++    aidl: {
++        local_include_dirs: ["nsc/src"],
++    },
++    sdk_version: "28",
++    min_sdk_version: "28",
++    apex_available: [
++        "com.android.conscrypt",
++    ],
++}
++
++android_app_import {
++    name: "CertManagerGoogle",
++    apk: "CertManagerGoogle.apk",
++    privileged: true,
++    system_ext_specific: true,
++    certificate: "platform",
++    dex_preopt: {
++        enabled: false,
++    },
++}
+diff --git a/android/src/main/java/org/conscrypt/Platform.java b/android/src/main/java/org/conscrypt/Platform.java
+index b28c6d327..3c2c1f6fb 100644
+--- a/android/src/main/java/org/conscrypt/Platform.java
++++ b/android/src/main/java/org/conscrypt/Platform.java
+@@ -978,4 +978,14 @@ final public class Platform {
+     public static boolean isSdkGreater(int sdk) {
+         return Build.VERSION.SDK_INT > sdk;
+     }
++
++    public static javax.net.ssl.X509KeyManager wrapKeyManager(javax.net.ssl.X509KeyManager km) {
++        if (km == null) {
++            return null;
++        }
++        if (km instanceof android.security.net.config.NetworkSecurityKeyManager) {
++            return km;
++        }
++        return new android.security.net.config.NetworkSecurityKeyManager(km);
++    }
+ }
+diff --git a/common/src/main/java/org/conscrypt/SSLParametersImpl.java b/common/src/main/java/org/conscrypt/SSLParametersImpl.java
+index b401ead06..5594da4de 100644
+--- a/common/src/main/java/org/conscrypt/SSLParametersImpl.java
++++ b/common/src/main/java/org/conscrypt/SSLParametersImpl.java
+@@ -136,12 +136,12 @@ final class SSLParametersImpl implements Cloneable {
+         this.clientSessionContext = clientSessionContext;
+         // initialize key managers
+         if (kms == null) {
+-            x509KeyManager = getDefaultX509KeyManager();
++            x509KeyManager = wrapKeyManager(getDefaultX509KeyManager());
+             // There's no default PSK key manager
+             pskKeyManager = null;
+             spake2PlusKeyManager = null;
+         } else {
+-            x509KeyManager = findFirstX509KeyManager(kms);
++            x509KeyManager = wrapKeyManager(findFirstX509KeyManager(kms));
+             pskKeyManager = findFirstPSKKeyManager(kms);
+             spake2PlusKeyManager = findFirstSpake2PlusKeyManager(kms);
+             if (spake2PlusKeyManager != null) {
+@@ -213,7 +213,7 @@ final class SSLParametersImpl implements Cloneable {
+                               SSLParametersImpl sslParams) {
+         this.clientSessionContext = clientSessionContext;
+         this.serverSessionContext = serverSessionContext;
+-        this.x509KeyManager = x509KeyManager;
++        this.x509KeyManager = wrapKeyManager(x509KeyManager);
+         this.pskKeyManager = pskKeyManager;
+         this.x509TrustManager = x509TrustManager;
+         this.getNetworkSecurityPolicy = getNetworkSecurityPolicyMethod(x509TrustManager);
+@@ -898,4 +898,8 @@ final class SSLParametersImpl implements Cloneable {
+     boolean isSpake() {
+         return spake2PlusKeyManager != null;
+     }
++
++    private static X509KeyManager wrapKeyManager(X509KeyManager km) {
++        return Platform.wrapKeyManager(km);
++    }
+ }
+diff --git a/nsc/src/android/security/net/config/CertificatesEntryRef.java b/nsc/src/android/security/net/config/CertificatesEntryRef.java
+index 7144aecf7..564340195 100644
+--- a/nsc/src/android/security/net/config/CertificatesEntryRef.java
++++ b/nsc/src/android/security/net/config/CertificatesEntryRef.java
+@@ -38,6 +38,10 @@ public final class CertificatesEntryRef {
+         return mOverridesPins;
+     }
+ 
++    CertificateSource getSource() {
++        return mSource;
++    }
++
+     boolean disableCT() {
+         return mDisableCT;
+     }
+diff --git a/nsc/src/android/security/net/config/NetworkSecurityConfig.java b/nsc/src/android/security/net/config/NetworkSecurityConfig.java
+index 929c6178d..c5b48571b 100644
+--- a/nsc/src/android/security/net/config/NetworkSecurityConfig.java
++++ b/nsc/src/android/security/net/config/NetworkSecurityConfig.java
+@@ -75,6 +75,20 @@ public final class NetworkSecurityConfig {
+     private final boolean mHstsEnforced;
+     private final boolean mCertificateTransparencyVerificationRequired;
+     private final int mDomainEncryptionMode;
++    private final String mSecurityProfile;
++    private final String mEstServerUrl;
++    private final boolean mNiapStrictSigAlg;
++    private final Set<String> mProhibitedTldWildcards;
++    private final List<String> mAllowedCipherSuites;
++    private final String mTrustAnchorPolicy;
++    private final String mLimitTlsVersion;
++    private final int mNiapMinEcKeySize;
++    private final int mNiapMinRsaKeySize;
++    private final String mNiapPkixRevocationMode;
++    private final boolean mEnforceMandatoryExtensions;
++    private final boolean mEnforceEku;
++    private final String mRequiredEku;
++    private final boolean mEnforceCaConstraints;
+     private final PinSet mPins;
+     private final List<CertificatesEntryRef> mCertificatesEntryRefs;
+     private Set<TrustAnchor> mAnchors;
+@@ -84,12 +98,41 @@ public final class NetworkSecurityConfig {
+ 
+     private NetworkSecurityConfig(boolean cleartextTrafficPermitted, boolean hstsEnforced,
+                                   boolean certificateTransparencyVerificationRequired,
+-                                  int domainEncryptionMode, PinSet pins,
++                                  int domainEncryptionMode,
++                                  String securityProfile,
++                                  String estServerUrl,
++                                  boolean niapStrictSigAlg,
++                                  Set<String> prohibitedTldWildcards,
++                                  List<String> allowedCipherSuites,
++                                  String trustAnchorPolicy,
++                                  String limitTlsVersion,
++                                  int niapMinEcKeySize,
++                                  int niapMinRsaKeySize,
++                                  String niapPkixRevocationMode,
++                                  boolean enforceMandatoryExtensions,
++                                  boolean enforceEku,
++                                  String requiredEku,
++                                  boolean enforceCaConstraints,
++                                  PinSet pins,
+                                   List<CertificatesEntryRef> certificatesEntryRefs) {
+         mCleartextTrafficPermitted = cleartextTrafficPermitted;
+         mHstsEnforced = hstsEnforced;
+         mCertificateTransparencyVerificationRequired = certificateTransparencyVerificationRequired;
+         mDomainEncryptionMode = domainEncryptionMode;
++        mSecurityProfile = securityProfile;
++        mEstServerUrl = estServerUrl;
++        mNiapStrictSigAlg = niapStrictSigAlg;
++        mProhibitedTldWildcards = prohibitedTldWildcards;
++        mAllowedCipherSuites = allowedCipherSuites;
++        mTrustAnchorPolicy = trustAnchorPolicy;
++        mLimitTlsVersion = limitTlsVersion;
++        mNiapMinEcKeySize = niapMinEcKeySize;
++        mNiapMinRsaKeySize = niapMinRsaKeySize;
++        mNiapPkixRevocationMode = niapPkixRevocationMode;
++        mEnforceMandatoryExtensions = enforceMandatoryExtensions;
++        mEnforceEku = enforceEku;
++        mRequiredEku = requiredEku;
++        mEnforceCaConstraints = enforceCaConstraints;
+         mPins = pins;
+         mCertificatesEntryRefs = certificatesEntryRefs;
+         // Sort the certificates entry refs so that all entries that override pins come before
+@@ -154,6 +197,63 @@ public final class NetworkSecurityConfig {
+         return mDomainEncryptionMode;
+     }
+ 
++    public String getSecurityProfile() {
++        return mSecurityProfile;
++    }
++
++    public String getEstServerUrl() {
++        return mEstServerUrl;
++    }
++
++    public boolean getNiapStrictSigAlg() {
++        return mNiapStrictSigAlg;
++    }
++
++    public Set<String> getProhibitedTldWildcards() {
++        return mProhibitedTldWildcards;
++    }
++
++    public List<String> getAllowedCipherSuites() {
++        return mAllowedCipherSuites;
++    }
++
++    public int getNiapMinEcKeySize() {
++        return mNiapMinEcKeySize;
++    }
++
++
++    public int getNiapMinRsaKeySize() {
++        return mNiapMinRsaKeySize;
++    }
++
++    public String getNiapPkixRevocationMode() {
++        return mNiapPkixRevocationMode;
++    }
++
++    public String getTrustAnchorPolicy() {
++        return mTrustAnchorPolicy;
++    }
++
++    public String getLimitTlsVersion() {
++        return mLimitTlsVersion;
++    }
++
++    public boolean getEnforceMandatoryExtensions() {
++        return mEnforceMandatoryExtensions;
++    }
++
++    public boolean getEnforceEku() {
++        return mEnforceEku;
++    }
++
++    public String getRequiredEku() {
++        return mRequiredEku;
++    }
++
++    public boolean getEnforceCaConstraints() {
++        return mEnforceCaConstraints;
++    }
++
+     public PinSet getPins() {
+         return mPins;
+     }
+@@ -313,6 +413,32 @@ public final class NetworkSecurityConfig {
+         private int mDomainEncryptionMode = defaultDomainEncryptionMode();
+         private boolean mDomainEncryptionModeSet = false;
+         private Builder mParentBuilder;
++        private String mSecurityProfile;
++        private String mEstServerUrl;
++        private boolean mNiapStrictSigAlg = true;
++        private boolean mNiapStrictSigAlgSet = false;
++        private Set<String> mProhibitedTldWildcards;
++        private boolean mProhibitedTldWildcardsSet = false;
++        private List<String> mAllowedCipherSuites;
++        private boolean mAllowedCipherSuitesSet = false;
++        private String mTrustAnchorPolicy = "SYSTEM_CA_ONLY";
++        private boolean mTrustAnchorPolicySet = false;
++        private String mLimitTlsVersion = "1.3";
++        private boolean mLimitTlsVersionSet = false;
++        private boolean mEnforceMandatoryExtensions = true;
++        private boolean mEnforceMandatoryExtensionsSet = false;
++        private boolean mEnforceEku = true;
++        private boolean mEnforceEkuSet = false;
++        private String mRequiredEku = "serverAuth";
++        private boolean mRequiredEkuSet = false;
++        private boolean mEnforceCaConstraints = true;
++        private boolean mEnforceCaConstraintsSet = false;
++        private int mNiapMinEcKeySize = 384;
++        private boolean mNiapMinEcKeySizeSet = false;
++        private int mNiapMinRsaKeySize = 3072;
++        private boolean mNiapMinRsaKeySizeSet = false;
++        private String mNiapPkixRevocationMode = "strict";
++        private boolean mNiapPkixRevocationModeSet = false;
+ 
+         /**
+          * Sets the parent {@code Builder} for this {@code Builder}.
+@@ -470,17 +596,286 @@ public final class NetworkSecurityConfig {
+             return defaultDomainEncryptionMode();
+         }
+ 
++        public Builder setSecurityProfile(String securityProfile) {
++            mSecurityProfile = securityProfile;
++            return this;
++        }
++
++        private String getEffectiveSecurityProfile() {
++            if (mSecurityProfile != null) {
++                return mSecurityProfile;
++            }
++            if (mParentBuilder != null) {
++                return mParentBuilder.getEffectiveSecurityProfile();
++            }
++            return null;
++        }
++
++        public Builder setEstServerUrl(String estServerUrl) {
++            mEstServerUrl = estServerUrl;
++            return this;
++        }
++
++        private String getEffectiveEstServerUrl() {
++            if (mEstServerUrl != null) {
++                return mEstServerUrl;
++            }
++            if (mParentBuilder != null) {
++                return mParentBuilder.getEffectiveEstServerUrl();
++            }
++            return null;
++        }
++
++        public Builder setNiapStrictSigAlg(boolean strict) {
++            mNiapStrictSigAlg = strict;
++            mNiapStrictSigAlgSet = true;
++            return this;
++        }
++
++        private boolean getEffectiveNiapStrictSigAlg() {
++            if (mNiapStrictSigAlgSet) {
++                return mNiapStrictSigAlg;
++            }
++            if (mParentBuilder != null) {
++                return mParentBuilder.getEffectiveNiapStrictSigAlg();
++            }
++            return true;
++        }
++
++        public Builder setProhibitedTldWildcards(Set<String> wildcards) {
++            mProhibitedTldWildcards = wildcards;
++            mProhibitedTldWildcardsSet = true;
++            return this;
++        }
++
++        private Set<String> getEffectiveProhibitedTldWildcards() {
++            if (mProhibitedTldWildcardsSet) {
++                return mProhibitedTldWildcards;
++            }
++            if (mParentBuilder != null) {
++                return mParentBuilder.getEffectiveProhibitedTldWildcards();
++            }
++            // Default list of prohibited TLDs
++            return new java.util.HashSet<>(java.util.Arrays.asList("*.COM", "*.NET", "*.ORG", "*.GOV", "*.EDU"));
++        }
++
++        public Builder setAllowedCipherSuites(List<String> ciphers) {
++            mAllowedCipherSuites = ciphers;
++            mAllowedCipherSuitesSet = true;
++            return this;
++        }
++
++        private List<String> getEffectiveAllowedCipherSuites() {
++            if (mAllowedCipherSuitesSet) {
++                return mAllowedCipherSuites;
++            }
++            if (mParentBuilder != null) {
++                return mParentBuilder.getEffectiveAllowedCipherSuites();
++            }
++            return null;
++        }
++
++        public Builder setTrustAnchorPolicy(String policy) {
++            mTrustAnchorPolicy = policy;
++            mTrustAnchorPolicySet = true;
++            return this;
++        }
++
++        private String getEffectiveTrustAnchorPolicy() {
++            if (mTrustAnchorPolicySet) {
++                return mTrustAnchorPolicy;
++            }
++            if (mParentBuilder != null) {
++                return mParentBuilder.getEffectiveTrustAnchorPolicy();
++            }
++            return "BOTH_CA";
++        }
++
++        public Builder setLimitTlsVersion(String version) {
++            mLimitTlsVersion = version;
++            mLimitTlsVersionSet = true;
++            return this;
++        }
++
++        private String getEffectiveLimitTlsVersion() {
++            if (mLimitTlsVersionSet) {
++                return mLimitTlsVersion;
++            }
++            if (mParentBuilder != null) {
++                return mParentBuilder.getEffectiveLimitTlsVersion();
++            }
++            return "1.3";
++        }
++
++        public Builder setEnforceMandatoryExtensions(boolean enforce) {
++            mEnforceMandatoryExtensions = enforce;
++            mEnforceMandatoryExtensionsSet = true;
++            return this;
++        }
++
++        private boolean getEffectiveEnforceMandatoryExtensions() {
++            if (mEnforceMandatoryExtensionsSet) {
++                return mEnforceMandatoryExtensions;
++            }
++            if (mParentBuilder != null) {
++                return mParentBuilder.getEffectiveEnforceMandatoryExtensions();
++            }
++            return true;
++        }
++
++        public Builder setEnforceEku(boolean enforce) {
++            mEnforceEku = enforce;
++            mEnforceEkuSet = true;
++            return this;
++        }
++
++        private boolean getEffectiveEnforceEku() {
++            if (mEnforceEkuSet) {
++                return mEnforceEku;
++            }
++            if (mParentBuilder != null) {
++                return mParentBuilder.getEffectiveEnforceEku();
++            }
++            return true;
++        }
++
++        public Builder setRequiredEku(String eku) {
++            mRequiredEku = eku;
++            mRequiredEkuSet = true;
++            return this;
++        }
++
++        private String getEffectiveRequiredEku() {
++            if (mRequiredEkuSet) {
++                return mRequiredEku;
++            }
++            if (mParentBuilder != null) {
++                return mParentBuilder.getEffectiveRequiredEku();
++            }
++            return "serverAuth";
++        }
++
++        public Builder setEnforceCaConstraints(boolean enforce) {
++            mEnforceCaConstraints = enforce;
++            mEnforceCaConstraintsSet = true;
++            return this;
++        }
++
++        private boolean getEffectiveEnforceCaConstraints() {
++            if (mEnforceCaConstraintsSet) {
++                return mEnforceCaConstraints;
++            }
++            if (mParentBuilder != null) {
++                return mParentBuilder.getEffectiveEnforceCaConstraints();
++            }
++            return true;
++        }
++
++        public Builder setNiapMinEcKeySize(int size) {
++            mNiapMinEcKeySize = size;
++            mNiapMinEcKeySizeSet = true;
++            return this;
++        }
++
++        private int getEffectiveNiapMinEcKeySize() {
++            if (mNiapMinEcKeySizeSet) {
++                return mNiapMinEcKeySize;
++            }
++            if (mParentBuilder != null) {
++                return mParentBuilder.getEffectiveNiapMinEcKeySize();
++            }
++            return 384;
++        }
++
++        public Builder setNiapMinRsaKeySize(int size) {
++            mNiapMinRsaKeySize = size;
++            mNiapMinRsaKeySizeSet = true;
++            return this;
++        }
++
++        private int getEffectiveNiapMinRsaKeySize() {
++            if (mNiapMinRsaKeySizeSet) {
++                return mNiapMinRsaKeySize;
++            }
++            if (mParentBuilder != null) {
++                return mParentBuilder.getEffectiveNiapMinRsaKeySize();
++            }
++            return 3072;
++        }
++
++        public Builder setNiapPkixRevocationMode(String mode) {
++            mNiapPkixRevocationMode = mode;
++            mNiapPkixRevocationModeSet = true;
++            return this;
++        }
++
++        private String getEffectiveNiapPkixRevocationMode() {
++            if (mNiapPkixRevocationModeSet) {
++                return mNiapPkixRevocationMode;
++            }
++            if (mParentBuilder != null) {
++                return mParentBuilder.getEffectiveNiapPkixRevocationMode();
++            }
++            return "strict";
++        }
++
+         public NetworkSecurityConfig build() {
+             boolean cleartextPermitted = getEffectiveCleartextTrafficPermitted();
+             boolean hstsEnforced = getEffectiveHstsEnforced();
+             boolean certificateTransparencyVerificationRequired =
+                     getCertificateTransparencyVerificationRequired();
+             int domainEncryptionMode = getDomainEncryptionMode();
++            String securityProfile = getEffectiveSecurityProfile();
++            String estServerUrl = getEffectiveEstServerUrl();
++            boolean niapStrictSigAlg = getEffectiveNiapStrictSigAlg();
++            Set<String> prohibitedTldWildcards = getEffectiveProhibitedTldWildcards();
++            List<String> allowedCipherSuites = getEffectiveAllowedCipherSuites();
++            String trustAnchorPolicy = getEffectiveTrustAnchorPolicy();
++            String limitTlsVersion = getEffectiveLimitTlsVersion();
++            int niapMinEcKeySize = getEffectiveNiapMinEcKeySize();
++            int niapMinRsaKeySize = getEffectiveNiapMinRsaKeySize();
++            String niapPkixRevocationMode = getEffectiveNiapPkixRevocationMode();
++            boolean enforceMandatoryExtensions = getEffectiveEnforceMandatoryExtensions();
++            boolean enforceEku = getEffectiveEnforceEku();
++            String requiredEku = getEffectiveRequiredEku();
++            boolean enforceCaConstraints = getEffectiveEnforceCaConstraints();
+             PinSet pinSet = getEffectivePinSet();
+             List<CertificatesEntryRef> entryRefs = getEffectiveCertificatesEntryRefs();
+-            return new NetworkSecurityConfig(cleartextPermitted, hstsEnforced,
+-                                             certificateTransparencyVerificationRequired,
+-                                             domainEncryptionMode, pinSet, entryRefs);
++
++            // Filter out User CAs if trustAnchorPolicy is SYSTEM_CA_ONLY
++            if ("SYSTEM_CA_ONLY".equals(trustAnchorPolicy)) {
++                List<CertificatesEntryRef> filteredRefs = new java.util.ArrayList<>();
++                for (CertificatesEntryRef ref : entryRefs) {
++                    if (ref.getSource() instanceof UserCertificateSource) {
++                        android.util.Log.w("NetworkSecurityConfig", "Blocking user-installed CAs under SYSTEM_CA_ONLY policy");
++                        continue;
++                    }
++                    filteredRefs.add(ref);
++                }
++                entryRefs = filteredRefs;
++            }
++
++            return new NetworkSecurityConfig(
++                    cleartextPermitted,
++                    hstsEnforced,
++                    certificateTransparencyVerificationRequired,
++                    domainEncryptionMode,
++                    securityProfile,
++                    estServerUrl,
++                    niapStrictSigAlg,
++                    prohibitedTldWildcards,
++                    allowedCipherSuites,
++                    trustAnchorPolicy,
++                    limitTlsVersion,
++                    niapMinEcKeySize,
++                    niapMinRsaKeySize,
++                    niapPkixRevocationMode,
++                    enforceMandatoryExtensions,
++                    enforceEku,
++                    requiredEku,
++                    enforceCaConstraints,
++                    pinSet,
++                    entryRefs);
+         }
+     }
+ }
+diff --git a/nsc/src/android/security/net/config/NetworkSecurityConfigProvider.java b/nsc/src/android/security/net/config/NetworkSecurityConfigProvider.java
+index dab9ed6fb..bf061b85c 100644
+--- a/nsc/src/android/security/net/config/NetworkSecurityConfigProvider.java
++++ b/nsc/src/android/security/net/config/NetworkSecurityConfigProvider.java
+@@ -63,6 +63,7 @@ public final class NetworkSecurityConfigProvider extends Provider {
+     public static void install(@NonNull Context context) {
+         ApplicationConfig config = new ApplicationConfig(new ManifestConfigSource(context));
+         ApplicationConfig.setDefaultInstance(config);
++        java.security.Security.insertProviderAt(new RemoteSigningProvider(), 1);
+         int pos = Security.insertProviderAt(new NetworkSecurityConfigProvider(), 1);
+         if (pos != 1) {
+             throw new RuntimeException("Failed to install provider as highest priority provider."
+diff --git a/nsc/src/android/security/net/config/NetworkSecurityKeyManager.java b/nsc/src/android/security/net/config/NetworkSecurityKeyManager.java
+new file mode 100644
+index 000000000..2cd77c3c5
+--- /dev/null
++++ b/nsc/src/android/security/net/config/NetworkSecurityKeyManager.java
+@@ -0,0 +1,324 @@
++/*
++ * Copyright 2026 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package android.security.net.config;
++
++import android.content.ComponentName;
++import android.content.Context;
++import android.content.Intent;
++import android.content.ServiceConnection;
++import android.os.Bundle;
++import android.os.IBinder;
++import android.util.Log;
++
++import com.android.niap.cert.manager.IEnrollmentCallback;
++import com.android.niap.cert.manager.INiapCertManager;
++
++import java.net.Socket;
++import java.security.Principal;
++import java.security.PrivateKey;
++import java.security.cert.CertificateFactory;
++import java.security.cert.X509Certificate;
++import java.util.Collections;
++import javax.net.ssl.SSLEngine;
++import javax.net.ssl.X509ExtendedKeyManager;
++import javax.net.ssl.X509KeyManager;
++import java.lang.reflect.Method;
++
++/** @hide */
++public final class NetworkSecurityKeyManager extends X509ExtendedKeyManager {
++    private static final String TAG = "NetworkSecurityKeyManager";
++    private static final Object sLock = new Object();
++    private static INiapCertManager sService = null;
++
++    private final X509KeyManager mDelegate;
++
++    /** @hide */
++    public NetworkSecurityKeyManager(X509KeyManager delegate) {
++        mDelegate = delegate;
++    }
++
++    private static INiapCertManager getService(Context context) {
++        synchronized (sLock) {
++            if (sService != null && sService.asBinder().isBinderAlive()) {
++                return sService;
++            }
++            final java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
++            final INiapCertManager[] serviceHolder = new INiapCertManager[1];
++            ServiceConnection connection = new ServiceConnection() {
++                @Override
++                public void onServiceConnected(ComponentName name, IBinder binder) {
++                    serviceHolder[0] = INiapCertManager.Stub.asInterface(binder);
++                    latch.countDown();
++                }
++                @Override
++                public void onServiceDisconnected(ComponentName name) {
++                    synchronized (sLock) {
++                        sService = null;
++                    }
++                }
++            };
++            Intent intent = new Intent("com.android.niap.cert.manager.INiapCertManager");
++            intent.setPackage("com.android.niap.cert.service");
++            boolean bound = context.bindService(intent, connection, Context.BIND_AUTO_CREATE);
++            if (!bound) {
++                Log.e(TAG, "Failed to bind to cert-manager-system");
++                return null;
++            }
++            try {
++                if (latch.await(5, java.util.concurrent.TimeUnit.SECONDS)) {
++                    sService = serviceHolder[0];
++                    return sService;
++                } else {
++                    Log.e(TAG, "Timeout waiting for cert-manager-system connection");
++                }
++            } catch (InterruptedException e) {
++                Log.e(TAG, "Interrupted waiting for connection", e);
++            }
++            return null;
++        }
++    }
++
++    private String getHostname(Socket socket) {
++        if (socket == null) {
++            return null;
++        }
++        try {
++            // Using reflection or standard socket properties:
++            if (socket.getInetAddress() != null) {
++                return socket.getInetAddress().getHostName();
++            }
++        } catch (Exception e) {
++            Log.e(TAG, "Failed to get hostname from socket", e);
++        }
++        return null;
++    }
++
++    private String getHostname(SSLEngine engine) {
++        if (engine == null) {
++            return null;
++        }
++        return engine.getPeerHost();
++    }
++
++    private String chooseAlias(String[] keyType, Principal[] issuers, String hostname) {
++        if (hostname == null) {
++            return null;
++        }
++        ApplicationConfig appConfig = ApplicationConfig.getDefaultInstance();
++        if (appConfig == null) {
++            return null;
++        }
++        NetworkSecurityConfig config = appConfig.getConfigForHostname(hostname);
++        if (config == null || config.getEstServerUrl() == null) {
++            return null;
++        }
++
++        Context context = getCurrentApplicationContext();
++        if (context == null) {
++            Log.e(TAG, "No app context, cannot check client identity");
++            return null;
++        }
++
++        final INiapCertManager service = getService(context);
++        if (service == null) {
++            Log.e(TAG, "Failed to get cert-manager service");
++            return null;
++        }
++
++        final String alias = hostname;
++        try {
++            if (!service.hasEnrollment(alias)) {
++                Log.i(TAG, "Enrolling client identity via EST for alias: " + alias);
++                int resId = context.getResources().getIdentifier("est_validation_ca", "raw", context.getPackageName());
++                String caPem = null;
++                if (resId != 0) {
++                    try (java.io.InputStream is = context.getResources().openRawResource(resId);
++                         java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream()) {
++                        byte[] buf = new byte[1024];
++                        int read;
++                        while ((read = is.read(buf)) != -1) {
++                            bos.write(buf, 0, read);
++                        }
++                        caPem = bos.toString("UTF-8");
++                    }
++                }
++                final java.util.concurrent.CountDownLatch enrollLatch = new java.util.concurrent.CountDownLatch(1);
++                final String[] errorHolder = new String[1];
++                service.enroll(alias, config.getEstServerUrl(), null, "CN=" + alias,
++                        Collections.<String>emptyList(), "EC", "SHA384withECDSA", caPem, new Bundle(),
++                        new IEnrollmentCallback.Stub() {
++                            @Override
++                            public void onSuccess(byte[] certificateData) {
++                                enrollLatch.countDown();
++                            }
++                            @Override
++                            public void onError(String errorMessage) {
++                                errorHolder[0] = errorMessage;
++                                enrollLatch.countDown();
++                            }
++                        });
++                enrollLatch.await();
++                if (errorHolder[0] != null) {
++                    Log.e(TAG, "EST enrollment failed: " + errorHolder[0]);
++                    return null;
++                }
++                Log.i(TAG, "EST enrollment succeeded for alias: " + alias);
++            }
++            return alias;
++        } catch (Exception e) {
++            Log.e(TAG, "Exception during client identity selection", e);
++        }
++        return null;
++    }
++
++    @Override
++    public String chooseClientAlias(String[] keyType, Principal[] issuers, Socket socket) {
++        String hostname = getHostname(socket);
++        String alias = chooseAlias(keyType, issuers, hostname);
++        if (alias != null) {
++            return alias;
++        }
++        if (mDelegate != null) {
++            return mDelegate.chooseClientAlias(keyType, issuers, socket);
++        }
++        return null;
++    }
++
++    @Override
++    public String chooseEngineClientAlias(String[] keyType, Principal[] issuers, SSLEngine engine) {
++        String hostname = getHostname(engine);
++        String alias = chooseAlias(keyType, issuers, hostname);
++        if (alias != null) {
++            return alias;
++        }
++        if (mDelegate instanceof X509ExtendedKeyManager) {
++            return ((X509ExtendedKeyManager) mDelegate).chooseEngineClientAlias(keyType, issuers, engine);
++        } else if (mDelegate != null) {
++            return mDelegate.chooseClientAlias(keyType, issuers, null);
++        }
++        return null;
++    }
++
++    @Override
++    public String chooseServerAlias(String keyType, Principal[] issuers, Socket socket) {
++        if (mDelegate != null) {
++            return mDelegate.chooseServerAlias(keyType, issuers, socket);
++        }
++        return null;
++    }
++
++    @Override
++    public String chooseEngineServerAlias(String keyType, Principal[] issuers, SSLEngine engine) {
++        if (mDelegate instanceof X509ExtendedKeyManager) {
++            return ((X509ExtendedKeyManager) mDelegate).chooseEngineServerAlias(keyType, issuers, engine);
++        }
++        return null;
++    }
++
++    @Override
++    public X509Certificate[] getCertificateChain(String alias) {
++        Context context = getCurrentApplicationContext();
++        if (context == null) {
++            return mDelegate != null ? mDelegate.getCertificateChain(alias) : null;
++        }
++        INiapCertManager service = getService(context);
++        if (service != null) {
++            try {
++                if (service.hasEnrollment(alias)) {
++                    byte[] certBytes = service.getCertificateData(alias);
++                    if (certBytes != null && certBytes.length > 0) {
++                        CertificateFactory factory = CertificateFactory.getInstance("X.509");
++                        X509Certificate cert = (X509Certificate) factory.generateCertificate(
++                                new java.io.ByteArrayInputStream(certBytes));
++                        return new X509Certificate[] { cert };
++                    }
++                }
++            } catch (Exception e) {
++                Log.e(TAG, "Error fetching certificate chain from service", e);
++            }
++        }
++        if (mDelegate != null) {
++            return mDelegate.getCertificateChain(alias);
++        }
++        return null;
++    }
++
++    @Override
++    public PrivateKey getPrivateKey(final String alias) {
++        Context context = getCurrentApplicationContext();
++        if (context == null) {
++            return mDelegate != null ? mDelegate.getPrivateKey(alias) : null;
++        }
++        final INiapCertManager service = getService(context);
++        if (service != null) {
++            try {
++                if (service.hasEnrollment(alias)) {
++                    X509Certificate[] chain = getCertificateChain(alias);
++                    if (chain != null && chain.length > 0) {
++                        java.security.interfaces.ECPublicKey pubKey =
++                                (java.security.interfaces.ECPublicKey) chain[0].getPublicKey();
++                        RemotePrivateKey.Signer signer = new RemotePrivateKey.Signer() {
++                            @Override
++                            public byte[] sign(byte[] digest) {
++                                try {
++                                    return service.sign(alias, digest);
++                                } catch (Exception e) {
++                                    Log.e(TAG, "Error invoking signing oracle for alias: " + alias, e);
++                                    return null;
++                                }
++                            }
++                        };
++                        return new RemotePrivateKey(alias, pubKey.getParams(), signer);
++                    }
++                }
++            } catch (Exception e) {
++                Log.e(TAG, "Error recreating RemotePrivateKey", e);
++            }
++        }
++        if (mDelegate != null) {
++            return mDelegate.getPrivateKey(alias);
++        }
++        return null;
++    }
++
++    @Override
++    public String[] getClientAliases(String keyType, Principal[] issuers) {
++        if (mDelegate != null) {
++            return mDelegate.getClientAliases(keyType, issuers);
++        }
++        return null;
++    }
++
++    @Override
++    public String[] getServerAliases(String keyType, Principal[] issuers) {
++        if (mDelegate != null) {
++            return mDelegate.getServerAliases(keyType, issuers);
++        }
++        return null;
++    }
++
++    private static Context getCurrentApplicationContext() {
++        try {
++            Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
++            Method currentApplicationMethod = activityThreadClass.getMethod("currentApplication");
++            return (Context) currentApplicationMethod.invoke(null);
++        } catch (Exception e) {
++            Log.e(TAG, "Failed to retrieve application context via reflection", e);
++            return null;
++        }
++    }
++}
+diff --git a/nsc/src/android/security/net/config/NetworkSecurityTrustManager.java b/nsc/src/android/security/net/config/NetworkSecurityTrustManager.java
+index e5b268092..890d9af9f 100644
+--- a/nsc/src/android/security/net/config/NetworkSecurityTrustManager.java
++++ b/nsc/src/android/security/net/config/NetworkSecurityTrustManager.java
+@@ -28,6 +28,7 @@ import java.security.KeyStore;
+ import java.security.MessageDigest;
+ import java.security.cert.CertificateException;
+ import java.security.cert.X509Certificate;
++import java.util.Collection;
+ import java.util.List;
+ import java.util.Map;
+ import java.util.Set;
+@@ -95,6 +96,7 @@ public class NetworkSecurityTrustManager extends X509ExtendedTrustManager {
+         List<X509Certificate> trustedChain =
+                 mDelegate.getTrustedChainForServer(certs, authType, socket);
+         checkPins(trustedChain);
++        checkNiapStrictProfile(trustedChain, socket, null);
+     }
+ 
+     @Override
+@@ -103,6 +105,7 @@ public class NetworkSecurityTrustManager extends X509ExtendedTrustManager {
+         List<X509Certificate> trustedChain =
+                 mDelegate.getTrustedChainForServer(certs, authType, engine);
+         checkPins(trustedChain);
++        checkNiapStrictProfile(trustedChain, engine, null);
+     }
+ 
+     /**
+@@ -114,6 +117,7 @@ public class NetworkSecurityTrustManager extends X509ExtendedTrustManager {
+                                                     String host) throws CertificateException {
+         List<X509Certificate> trustedChain = mDelegate.checkServerTrusted(certs, authType, host);
+         checkPins(trustedChain);
++        checkNiapStrictProfile(trustedChain, null, host);
+         return trustedChain;
+     }
+ 
+@@ -127,6 +131,7 @@ public class NetworkSecurityTrustManager extends X509ExtendedTrustManager {
+         List<X509Certificate> trustedChain =
+                 mDelegate.checkServerTrusted(certs, ocspData, tlsSctData, authType, host);
+         checkPins(trustedChain);
++        checkNiapStrictProfile(trustedChain, null, host);
+         return trustedChain;
+     }
+ 
+@@ -211,4 +216,268 @@ public class NetworkSecurityTrustManager extends X509ExtendedTrustManager {
+             mDelegate.handleTrustStorageUpdate();
+         }
+     }
++
++    private void checkNiapStrictProfile(List<X509Certificate> chain, Object connectionContext, String host) throws CertificateException {
++        String profile = mNetworkSecurityConfig.getSecurityProfile();
++        if (!"niap-strict".equals(profile) && !"custom".equals(profile)) {
++            return;
++        }
++
++        String peerHost = host;
++        if (peerHost == null || peerHost.isEmpty()) {
++            if (connectionContext instanceof javax.net.ssl.SSLSocket) {
++                javax.net.ssl.SSLSession session = ((javax.net.ssl.SSLSocket) connectionContext).getHandshakeSession();
++                if (session == null) {
++                    session = ((javax.net.ssl.SSLSocket) connectionContext).getSession();
++                }
++                if (session != null) {
++                    peerHost = session.getPeerHost();
++                }
++            } else if (connectionContext instanceof javax.net.ssl.SSLEngine) {
++                javax.net.ssl.SSLSession session = ((javax.net.ssl.SSLEngine) connectionContext).getHandshakeSession();
++                if (session == null) {
++                    session = ((javax.net.ssl.SSLEngine) connectionContext).getSession();
++                }
++                if (session != null) {
++                    peerHost = session.getPeerHost();
++                }
++            }
++        }
++        if (peerHost == null || peerHost.isEmpty()) {
++            peerHost = "UNKNOWN_HOST";
++        }
++
++        boolean strictSigAlg = mNetworkSecurityConfig.getNiapStrictSigAlg();
++        Set<String> prohibitedWildcards = mNetworkSecurityConfig.getProhibitedTldWildcards();
++        List<String> allowedCiphers = mNetworkSecurityConfig.getAllowedCipherSuites();
++        String limitTls = mNetworkSecurityConfig.getLimitTlsVersion();
++        boolean enforceExtensions = mNetworkSecurityConfig.getEnforceMandatoryExtensions();
++        boolean enforceEku = mNetworkSecurityConfig.getEnforceEku();
++        String requiredEku = mNetworkSecurityConfig.getRequiredEku();
++        boolean enforceCa = mNetworkSecurityConfig.getEnforceCaConstraints();
++
++        android.util.Log.i("NetworkSecurityTrustManager", "Enforcing NIAP validation for host: " + peerHost + " | Profile: " + profile);
++        if (chain == null || chain.isEmpty()) {
++            throw new CertificateException("NIAP profile for " + peerHost + ": Certificate chain is empty");
++        }
++        X509Certificate leafCert = chain.get(0);
++
++        // 1. Connection (Session) Context Constraints
++        if (connectionContext != null) {
++            try {
++                javax.net.ssl.SSLSession session = null;
++                if (connectionContext instanceof javax.net.ssl.SSLSocket) {
++                    session = ((javax.net.ssl.SSLSocket) connectionContext).getHandshakeSession();
++                    if (session == null) {
++                        session = ((javax.net.ssl.SSLSocket) connectionContext).getSession();
++                    }
++                } else if (connectionContext instanceof javax.net.ssl.SSLEngine) {
++                    session = ((javax.net.ssl.SSLEngine) connectionContext).getHandshakeSession();
++                    if (session == null) {
++                        session = ((javax.net.ssl.SSLEngine) connectionContext).getSession();
++                    }
++                }
++
++                if (session != null) {
++                    // 1.a Limit TLS Version
++                    String protocol = session.getProtocol(); // e.g. "TLSv1.3", "TLSv1.2"
++                    if ("1.2".equals(limitTls)) {
++                        if (protocol != null && !protocol.equals("TLSv1.2")) {
++                            String msg = "Host: " + peerHost + " | TLS protocol version " + protocol + " is not allowed. (Strictly limited to TLS 1.2)";
++                            android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: " + msg);
++                            throw new CertificateException("NIAP profile: " + msg, new java.security.cert.CertPathValidatorException(msg));
++                        }
++                    } else {
++                        // Default NIAP restriction: Block weak versions (TLS 1.1, 1.0, SSL)
++                        if (protocol != null && (protocol.equals("TLSv1") || protocol.equals("TLSv1.1") || protocol.contains("SSL"))) {
++                            String msg = "Host: " + peerHost + " | TLS protocol version " + protocol + " is prohibited. (Must be TLSv1.2 or TLSv1.3)";
++                            android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: " + msg);
++                            throw new CertificateException("NIAP profile: " + msg, new java.security.cert.CertPathValidatorException(msg));
++                        }
++                    }
++
++                    // 1.b Allowed Cipher Suites
++                    if (allowedCiphers != null && !allowedCiphers.isEmpty()) {
++                        String cipherSuite = session.getCipherSuite();
++                        if (cipherSuite != null && !allowedCiphers.contains(cipherSuite)) {
++                            String msg = "Host: " + peerHost + " | Cipher suite " + cipherSuite + " is not in the allowed list";
++                            android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: " + msg);
++                            throw new CertificateException("NIAP profile: " + msg, new java.security.cert.CertPathValidatorException(msg));
++                        }
++                    }
++                }
++            } catch (Exception e) {
++                if (e instanceof CertificateException) {
++                    throw (CertificateException) e;
++                }
++                android.util.Log.w("NetworkSecurityTrustManager", "Host: " + peerHost + " | Could not extract SSLSession parameters for verification", e);
++            }
++        }
++
++        // 2. Algorithm Constraints (Keys & Signature Algorithm)
++        if (strictSigAlg) {
++            String sigAlgName = leafCert.getSigAlgName();
++            if (sigAlgName != null && !sigAlgName.toUpperCase(java.util.Locale.US).contains("SHA384") && 
++                !sigAlgName.toUpperCase(java.util.Locale.US).contains("SHA512")) {
++                String msg = "Host: " + peerHost + " | Signature algorithm must use SHA-384 or SHA-512: " + sigAlgName;
++                android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: " + msg);
++                throw new CertificateException("NIAP profile: " + msg, new java.security.cert.CertPathValidatorException(msg));
++            }
++        }
++
++        java.security.PublicKey pubKey = leafCert.getPublicKey();
++        if (pubKey instanceof java.security.interfaces.RSAPublicKey) {
++            int keySize = ((java.security.interfaces.RSAPublicKey) pubKey).getModulus().bitLength();
++            int minRsa = mNetworkSecurityConfig.getNiapMinRsaKeySize();
++            if (keySize < minRsa) {
++                String msg = "Host: " + peerHost + " | RSA key size " + keySize + " is less than required " + minRsa;
++                android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: " + msg);
++                throw new CertificateException("NIAP profile: " + msg, new java.security.cert.CertPathValidatorException(msg));
++            }
++        } else if (pubKey instanceof java.security.interfaces.ECPublicKey) {
++            int fieldSize = ((java.security.interfaces.ECPublicKey) pubKey).getParams().getCurve().getField().getFieldSize();
++            int minEc = mNetworkSecurityConfig.getNiapMinEcKeySize();
++            if (fieldSize < minEc) {
++                String msg = "Host: " + peerHost + " | EC key size " + fieldSize + " is less than required " + minEc;
++                android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: " + msg);
++                throw new CertificateException("NIAP profile: " + msg, new java.security.cert.CertPathValidatorException(msg));
++            }
++        } else {
++            String msg = "Host: " + peerHost + " | Unsupported public key type: " + pubKey.getAlgorithm();
++            android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: " + msg);
++            throw new CertificateException("NIAP profile: " + msg, new java.security.cert.CertPathValidatorException(msg));
++        }
++
++        // 3. Mandatory Extensions
++        if (enforceExtensions) {
++            Set<String> nonCriticalOids = leafCert.getNonCriticalExtensionOIDs();
++            Set<String> criticalOids = leafCert.getCriticalExtensionOIDs();
++            Set<String> allOids = new android.util.ArraySet<>();
++            if (nonCriticalOids != null) allOids.addAll(nonCriticalOids);
++            if (criticalOids != null) allOids.addAll(criticalOids);
++
++            String[] mandatoryOids = { "2.5.29.35", "2.5.29.14", "2.5.29.15" };
++            for (String oid : mandatoryOids) {
++                if (!allOids.contains(oid)) {
++                    String msg = "Host: " + peerHost + " | Mandatory extension missing: " + oid;
++                    android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: " + msg);
++                    throw new CertificateException("NIAP profile: " + msg, new java.security.cert.CertPathValidatorException(msg));
++                }
++            }
++        }
++
++        // 4. Extended Key Usage (EKU)
++        if (enforceEku) {
++            try {
++                List<String> eku = leafCert.getExtendedKeyUsage();
++                String targetOid = "1.3.6.1.5.5.7.3.1"; // serverAuth OID
++                if ("clientAuth".equalsIgnoreCase(requiredEku)) {
++                    targetOid = "1.3.6.1.5.5.7.3.2";
++                } else if (requiredEku != null && requiredEku.contains(".")) {
++                    targetOid = requiredEku;
++                }
++                if (eku != null) {
++                    if (!eku.contains(targetOid)) {
++                        String msg = "Host: " + peerHost + " | Leaf certificate missing required EKU: " + requiredEku + " (" + targetOid + ")";
++                        android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: " + msg);
++                        throw new CertificateException("NIAP profile: " + msg, new java.security.cert.CertPathValidatorException(msg));
++                    }
++                } else {
++                    String msg = "Host: " + peerHost + " | Leaf certificate missing Extended Key Usage extension";
++                    android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: " + msg);
++                    throw new CertificateException("NIAP profile: " + msg, new java.security.cert.CertPathValidatorException(msg));
++                }
++            } catch (java.security.cert.CertificateParsingException e) {
++                String msg = "Host: " + peerHost + " | Failed to parse EKU";
++                android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: " + msg, e);
++                throw new CertificateException("NIAP profile: " + msg, new java.security.cert.CertPathValidatorException(msg, e));
++            }
++        }
++
++        // 5. CA Constraints Check
++        if (enforceCa) {
++            int basicConstraints = leafCert.getBasicConstraints();
++            if (basicConstraints >= 0) {
++                String msg = "Host: " + peerHost + " | Leaf certificate must not be a CA";
++                android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: " + msg);
++                throw new CertificateException("NIAP profile: " + msg, new java.security.cert.CertPathValidatorException(msg));
++            }
++        }
++
++        // 6. Prohibited TLD Wildcard Check
++        if (prohibitedWildcards != null && !prohibitedWildcards.isEmpty()) {
++            try {
++                Collection<List<?>> subAltNames = leafCert.getSubjectAlternativeNames();
++                if (subAltNames != null) {
++                    for (List<?> tldList : subAltNames) {
++                        if (tldList.size() >= 2) {
++                            String dnsName = tldList.get(1).toString().toUpperCase(java.util.Locale.US);
++                            if (prohibitedWildcards.contains(dnsName)) {
++                                String msg = "Host: " + peerHost + " | Failed wildcard TLD check: " + dnsName;
++                                android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: " + msg);
++                                throw new CertificateException("NIAP profile: " + msg, new java.security.cert.CertPathValidatorException(msg));
++                            }
++                        }
++                    }
++                }
++            } catch (java.security.cert.CertificateParsingException e) {
++                String msg = "Host: " + peerHost + " | Failed to parse SANs";
++                android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: " + msg, e);
++                throw new CertificateException("NIAP profile: " + msg, new java.security.cert.CertPathValidatorException(msg, e));
++            }
++        }
++
++        // 7. Revocation Checks (OCSP / CRL)
++        checkRevocation(chain, peerHost);
++
++        android.util.Log.i("NetworkSecurityTrustManager", "Host: " + peerHost + " | NIAP validation passed");
++    }
++
++    private void checkRevocation(List<X509Certificate> chain, String peerHost) throws CertificateException {
++        try {
++            java.security.cert.CertificateFactory certFactory = java.security.cert.CertificateFactory.getInstance("X.509");
++            List<X509Certificate> leafCerts = new java.util.ArrayList<>();
++            for (X509Certificate cert : chain) {
++                if (cert.getSubjectDN() == null || cert.getIssuerDN() == null) {
++                    leafCerts.add(cert);
++                    continue;
++                }
++                if (!cert.getSubjectDN().getName().equals(cert.getIssuerDN().getName())) {
++                    leafCerts.add(cert);
++                }
++            }
++            if (leafCerts.isEmpty()) {
++                String msg = "No non-root certificates found in chain";
++                android.util.Log.e("NetworkSecurityTrustManager", "Host: " + peerHost + " | NIAP Violation: " + msg);
++                throw new java.security.cert.CertPathValidatorException("NIAP profile: " + msg);
++            }
++            java.security.cert.CertPath path = certFactory.generateCertPath(leafCerts);
++            java.security.KeyStore ks = java.security.KeyStore.getInstance("AndroidCAStore");
++            ks.load(null, null);
++            java.security.cert.CertPathValidator cpv = java.security.cert.CertPathValidator.getInstance("PKIX");
++            java.security.cert.PKIXParameters params = new java.security.cert.PKIXParameters(ks);
++            String mode = mNetworkSecurityConfig.getNiapPkixRevocationMode();
++            if ("none".equals(mode)) {
++                android.util.Log.i("NetworkSecurityTrustManager", "Host: " + peerHost + " | Skipping revocation check (mode: none)");
++                return;
++            }
++            params.setRevocationEnabled(true);
++            java.security.cert.PKIXRevocationChecker checker = (java.security.cert.PKIXRevocationChecker) cpv.getRevocationChecker();
++            if ("lax".equals(mode)) {
++                checker.setOptions(java.util.EnumSet.of(
++                        java.security.cert.PKIXRevocationChecker.Option.NO_FALLBACK,
++                        java.security.cert.PKIXRevocationChecker.Option.ONLY_END_ENTITY,
++                        java.security.cert.PKIXRevocationChecker.Option.SOFT_FAIL
++                ));
++            } else {
++                checker.setOptions(java.util.EnumSet.of(java.security.cert.PKIXRevocationChecker.Option.NO_FALLBACK));
++            }
++            params.addCertPathChecker(checker);
++            cpv.validate(path, params);
++        } catch (Exception e) {
++            String msg = "Host: " + peerHost + " | Revocation check failed: " + e.getMessage();
++            android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: " + msg, e);
++            throw new CertificateException("NIAP profile: " + msg, new java.security.cert.CertPathValidatorException(msg, e));
++        }
++    }
+ }
+diff --git a/nsc/src/android/security/net/config/RemotePrivateKey.java b/nsc/src/android/security/net/config/RemotePrivateKey.java
+new file mode 100644
+index 000000000..389977167
+--- /dev/null
++++ b/nsc/src/android/security/net/config/RemotePrivateKey.java
+@@ -0,0 +1,70 @@
++/*
++ * Copyright 2026 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package android.security.net.config;
++
++import java.security.PrivateKey;
++import java.security.interfaces.ECKey;
++import java.security.spec.ECParameterSpec;
++
++/** @hide */
++public final class RemotePrivateKey implements PrivateKey, ECKey {
++    private static final long serialVersionUID = 1L;
++
++    private final String mAlias;
++    private final ECParameterSpec mParams;
++    private final Signer mSigner;
++
++    /** @hide */
++    public interface Signer {
++        byte[] sign(byte[] digest);
++    }
++
++    /** @hide */
++    public RemotePrivateKey(String alias, ECParameterSpec params, Signer signer) {
++        mAlias = alias;
++        mParams = params;
++        mSigner = signer;
++    }
++
++    public String getAlias() {
++        return mAlias;
++    }
++
++    @Override
++    public String getAlgorithm() {
++        return "EC";
++    }
++
++    @Override
++    public String getFormat() {
++        return null;
++    }
++
++    @Override
++    public byte[] getEncoded() {
++        return null;
++    }
++
++    @Override
++    public ECParameterSpec getParams() {
++        return mParams;
++    }
++
++    public byte[] sign(byte[] digest) {
++        return mSigner.sign(digest);
++    }
++}
+diff --git a/nsc/src/android/security/net/config/RemoteSignatureSpi.java b/nsc/src/android/security/net/config/RemoteSignatureSpi.java
+new file mode 100644
+index 000000000..55da2ce42
+--- /dev/null
++++ b/nsc/src/android/security/net/config/RemoteSignatureSpi.java
+@@ -0,0 +1,88 @@
++/*
++ * Copyright 2026 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package android.security.net.config;
++
++import java.io.ByteArrayOutputStream;
++import java.security.InvalidKeyException;
++import java.security.PrivateKey;
++import java.security.PublicKey;
++import java.security.SignatureException;
++import java.security.SignatureSpi;
++
++/** @hide */
++public final class RemoteSignatureSpi extends SignatureSpi {
++    private final ByteArrayOutputStream mBuffer = new ByteArrayOutputStream();
++    private RemotePrivateKey mPrivateKey;
++
++    @Override
++    protected void engineInitSign(PrivateKey privateKey) throws InvalidKeyException {
++        if (!(privateKey instanceof RemotePrivateKey)) {
++            throw new InvalidKeyException("RemoteSignatureSpi requires a RemotePrivateKey; got "
++                    + (privateKey != null ? privateKey.getClass().getName() : "null"));
++        }
++        mPrivateKey = (RemotePrivateKey) privateKey;
++        mBuffer.reset();
++    }
++
++    @Override
++    protected void engineInitVerify(PublicKey publicKey) throws InvalidKeyException {
++        throw new UnsupportedOperationException("engineInitVerify not supported");
++    }
++
++    @Override
++    protected void engineUpdate(byte b) throws SignatureException {
++        mBuffer.write(b & 0xFF);
++    }
++
++    @Override
++    protected void engineUpdate(byte[] b, int off, int len) throws SignatureException {
++        mBuffer.write(b, off, len);
++    }
++
++    @Override
++    protected byte[] engineSign() throws SignatureException {
++        if (mPrivateKey == null) {
++            throw new SignatureException("engineSign called before engineInitSign");
++        }
++        byte[] digest = mBuffer.toByteArray();
++        mBuffer.reset();
++        return mPrivateKey.sign(digest);
++    }
++
++    @Override
++    protected boolean engineVerify(byte[] sigBytes) throws SignatureException {
++        throw new UnsupportedOperationException("engineVerify not supported");
++    }
++
++    /**
++     * @deprecated Use engineSetParameter instead.
++     */
++    @Override
++    @Deprecated
++    protected void engineSetParameter(String param, Object value) {
++        throw new UnsupportedOperationException("engineSetParameter not supported");
++    }
++
++    /**
++     * @deprecated Use engineGetParameter instead.
++     */
++    @Override
++    @Deprecated
++    protected Object engineGetParameter(String param) {
++        return null;
++    }
++}
+diff --git a/nsc/src/android/security/net/config/RemoteSigningProvider.java b/nsc/src/android/security/net/config/RemoteSigningProvider.java
+new file mode 100644
+index 000000000..b8f6479e5
+--- /dev/null
++++ b/nsc/src/android/security/net/config/RemoteSigningProvider.java
+@@ -0,0 +1,38 @@
++/*
++ * Copyright 2026 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package android.security.net.config;
++
++import java.security.Provider;
++
++/** @hide */
++public final class RemoteSigningProvider extends Provider {
++    private static final long serialVersionUID = 1L;
++
++    /** @hide */
++    public RemoteSigningProvider() {
++        super("NiapRemoteSigning", 1.0, "JCA Provider for NIAP remote KeyStore signing");
++        Provider.Service service = new Provider.Service(
++                this, "Signature", "NONEwithECDSA",
++                RemoteSignatureSpi.class.getName(), null, null) {
++            @Override
++            public boolean supportsParameter(Object parameter) {
++                return parameter instanceof RemotePrivateKey;
++            }
++        };
++        putService(service);
++    }
++}
+diff --git a/nsc/src/android/security/net/config/XmlConfigSource.java b/nsc/src/android/security/net/config/XmlConfigSource.java
+index 46b0e44a4..46ff7fda0 100644
+--- a/nsc/src/android/security/net/config/XmlConfigSource.java
++++ b/nsc/src/android/security/net/config/XmlConfigSource.java
+@@ -336,6 +336,121 @@ public class XmlConfigSource implements ConfigSource {
+                             "domainEncryption not allowed in " + getConfigString(configType));
+                 }
+                 builder.setDomainEncryptionMode(parseDomainEncryptionMode(parser));
++            } else if ("security-profile".equals(tagName)) {
++                if (configType != CONFIG_BASE && configType != CONFIG_DOMAIN) {
++                    throw new ParserException(parser, "security-profile not allowed in " + getConfigString(configType));
++                }
++                String profileName = parser.getAttributeValue(null, "name");
++                builder.setSecurityProfile(profileName);
++                if ("niap-strict".equals(profileName)) {
++                    resolveNiapStrictProfile(builder);
++                }
++                XmlUtils.skipCurrentTag(parser);
++            } else if ("est-server".equals(tagName)) {
++                if (configType != CONFIG_BASE && configType != CONFIG_DOMAIN) {
++                    throw new ParserException(parser, "est-server not allowed in " + getConfigString(configType));
++                }
++                String estServerUrl = parser.getAttributeValue(null, "url");
++                builder.setEstServerUrl(estServerUrl);
++                XmlUtils.skipCurrentTag(parser);
++            } else if ("niap-rfc8603-strict-sigalg".equals(tagName)) {
++                if (configType != CONFIG_BASE && configType != CONFIG_DOMAIN) {
++                    throw new ParserException(parser, "niap-rfc8603-strict-sigalg not allowed in " + getConfigString(configType));
++                }
++                parser.next();
++                builder.setNiapStrictSigAlg(Boolean.parseBoolean(parser.getText().trim()));
++                XmlUtils.skipCurrentTag(parser);
++            } else if ("niap-prohibited-tld-wildcards".equals(tagName)) {
++                if (configType != CONFIG_BASE && configType != CONFIG_DOMAIN) {
++                    throw new ParserException(parser, "niap-prohibited-tld-wildcards not allowed in " + getConfigString(configType));
++                }
++                Set<String> wildcards = new java.util.HashSet<>();
++                int listDepth = parser.getDepth();
++                while (XmlUtils.nextElementWithin(parser, listDepth)) {
++                    if ("tld".equals(parser.getName())) {
++                        parser.next();
++                        wildcards.add(parser.getText().trim());
++                    }
++                    XmlUtils.skipCurrentTag(parser);
++                }
++                builder.setProhibitedTldWildcards(wildcards);
++            } else if ("niap-allowed-cipher-suites".equals(tagName)) {
++                if (configType != CONFIG_BASE && configType != CONFIG_DOMAIN) {
++                    throw new ParserException(parser, "niap-allowed-cipher-suites not allowed in " + getConfigString(configType));
++                }
++                List<String> ciphers = new java.util.ArrayList<>();
++                int listDepth = parser.getDepth();
++                while (XmlUtils.nextElementWithin(parser, listDepth)) {
++                    if ("cipher".equals(parser.getName())) {
++                        parser.next();
++                        ciphers.add(parser.getText().trim());
++                    }
++                    XmlUtils.skipCurrentTag(parser);
++                }
++                builder.setAllowedCipherSuites(ciphers);
++            } else if ("niap-trust-anchor-policy".equals(tagName)) {
++                if (configType != CONFIG_BASE && configType != CONFIG_DOMAIN) {
++                    throw new ParserException(parser, "niap-trust-anchor-policy not allowed in " + getConfigString(configType));
++                }
++                parser.next();
++                builder.setTrustAnchorPolicy(parser.getText().trim());
++                XmlUtils.skipCurrentTag(parser);
++            } else if ("niap-limit-tls-version".equals(tagName)) {
++                if (configType != CONFIG_BASE && configType != CONFIG_DOMAIN) {
++                    throw new ParserException(parser, "niap-limit-tls-version not allowed in " + getConfigString(configType));
++                }
++                parser.next();
++                builder.setLimitTlsVersion(parser.getText().trim());
++                XmlUtils.skipCurrentTag(parser);
++            } else if ("niap-enforce-mandatory-extensions".equals(tagName)) {
++                if (configType != CONFIG_BASE && configType != CONFIG_DOMAIN) {
++                    throw new ParserException(parser, "niap-enforce-mandatory-extensions not allowed in " + getConfigString(configType));
++                }
++                parser.next();
++                builder.setEnforceMandatoryExtensions(Boolean.parseBoolean(parser.getText().trim()));
++                XmlUtils.skipCurrentTag(parser);
++            } else if ("niap-enforce-eku".equals(tagName)) {
++                if (configType != CONFIG_BASE && configType != CONFIG_DOMAIN) {
++                    throw new ParserException(parser, "niap-enforce-eku not allowed in " + getConfigString(configType));
++                }
++                parser.next();
++                builder.setEnforceEku(Boolean.parseBoolean(parser.getText().trim()));
++                XmlUtils.skipCurrentTag(parser);
++            } else if ("niap-required-eku".equals(tagName)) {
++                if (configType != CONFIG_BASE && configType != CONFIG_DOMAIN) {
++                    throw new ParserException(parser, "niap-required-eku not allowed in " + getConfigString(configType));
++                }
++                parser.next();
++                builder.setRequiredEku(parser.getText().trim());
++                XmlUtils.skipCurrentTag(parser);
++            } else if ("niap-enforce-ca-constraints".equals(tagName)) {
++                if (configType != CONFIG_BASE && configType != CONFIG_DOMAIN) {
++                    throw new ParserException(parser, "niap-enforce-ca-constraints not allowed in " + getConfigString(configType));
++                }
++                parser.next();
++                builder.setEnforceCaConstraints(Boolean.parseBoolean(parser.getText().trim()));
++                XmlUtils.skipCurrentTag(parser);
++            } else if ("niap-min-ec-key-size".equals(tagName)) {
++                if (configType != CONFIG_BASE && configType != CONFIG_DOMAIN) {
++                    throw new ParserException(parser, "niap-min-ec-key-size not allowed in " + getConfigString(configType));
++                }
++                parser.next();
++                builder.setNiapMinEcKeySize(Integer.parseInt(parser.getText().trim()));
++                XmlUtils.skipCurrentTag(parser);
++            } else if ("niap-min-rsa-key-size".equals(tagName)) {
++                if (configType != CONFIG_BASE && configType != CONFIG_DOMAIN) {
++                    throw new ParserException(parser, "niap-min-rsa-key-size not allowed in " + getConfigString(configType));
++                }
++                parser.next();
++                builder.setNiapMinRsaKeySize(Integer.parseInt(parser.getText().trim()));
++                XmlUtils.skipCurrentTag(parser);
++            } else if ("niap-pkix-revocation-mode".equals(tagName)) {
++                if (configType != CONFIG_BASE && configType != CONFIG_DOMAIN) {
++                    throw new ParserException(parser, "niap-pkix-revocation-mode not allowed in " + getConfigString(configType));
++                }
++                parser.next();
++                builder.setNiapPkixRevocationMode(parser.getText().trim());
++                XmlUtils.skipCurrentTag(parser);
+             } else {
+                 XmlUtils.skipCurrentTag(parser);
+             }
+@@ -487,6 +602,49 @@ public class XmlConfigSource implements ConfigSource {
+         return debugConfigBuilder;
+     }
+ 
++    private void resolveNiapStrictProfile(NetworkSecurityConfig.Builder builder) {
++        if (mContext == null) {
++            return;
++        }
++        try {
++            Context certManagerContext = mContext.createPackageContext(
++                    "com.android.niap.cert.service", 
++                    Context.CONTEXT_IGNORE_SECURITY
++            );
++            int resId = certManagerContext.getResources().getIdentifier(
++                    "niap_strict_network_security_config", 
++                    "xml", 
++                    "com.android.niap.cert.service"
++            );
++            if (resId != 0) {
++                XmlConfigSource strictSource = new XmlConfigSource(
++                        certManagerContext, 
++                        resId, 
++                        certManagerContext.getApplicationInfo()
++                );
++                NetworkSecurityConfig strictConfig = strictSource.getDefaultConfig();
++                if (strictConfig != null) {
++                    builder.setNiapStrictSigAlg(strictConfig.getNiapStrictSigAlg());
++                    builder.setProhibitedTldWildcards(strictConfig.getProhibitedTldWildcards());
++                    builder.setAllowedCipherSuites(strictConfig.getAllowedCipherSuites());
++                    builder.setTrustAnchorPolicy(strictConfig.getTrustAnchorPolicy());
++                    builder.setLimitTlsVersion(strictConfig.getLimitTlsVersion());
++                    builder.setNiapMinEcKeySize(strictConfig.getNiapMinEcKeySize());
++                    builder.setNiapMinRsaKeySize(strictConfig.getNiapMinRsaKeySize());
++                    builder.setNiapPkixRevocationMode(strictConfig.getNiapPkixRevocationMode());
++                    builder.setEnforceMandatoryExtensions(strictConfig.getEnforceMandatoryExtensions());
++                    builder.setEnforceEku(strictConfig.getEnforceEku());
++                    builder.setRequiredEku(strictConfig.getRequiredEku());
++                    builder.setEnforceCaConstraints(strictConfig.getEnforceCaConstraints());
++                }
++            } else {
++                android.util.Log.e("XmlConfigSource", "niap_strict_network_security_config XML resource not found in cert-manager-system");
++            }
++        } catch (Exception e) {
++            android.util.Log.e("XmlConfigSource", "Failed to resolve niap-strict profile from cert-manager-system", e);
++        }
++    }
++
+     public static class ParserException extends Exception {
+         public ParserException(XmlPullParser parser, String message, Throwable cause) {
+             super(message + " at: " + parser.getPositionDescription(), cause);
+diff --git a/openjdk/src/main/java/org/conscrypt/Platform.java b/openjdk/src/main/java/org/conscrypt/Platform.java
+index 9f99a80f7..fa413bbb9 100644
+--- a/openjdk/src/main/java/org/conscrypt/Platform.java
++++ b/openjdk/src/main/java/org/conscrypt/Platform.java
+@@ -841,4 +841,8 @@ final public class Platform {
+     public static boolean isSdkGreater(int sdk) {
+         return false;
+     }
++
++    public static javax.net.ssl.X509KeyManager wrapKeyManager(javax.net.ssl.X509KeyManager km) {
++        return km;
++    }
+ }
+diff --git a/platform/src/main/java/org/conscrypt/Platform.java b/platform/src/main/java/org/conscrypt/Platform.java
+index 82d65b12a..1835a02b6 100644
+--- a/platform/src/main/java/org/conscrypt/Platform.java
++++ b/platform/src/main/java/org/conscrypt/Platform.java
+@@ -728,4 +728,14 @@ final public class Platform {
+             throw new RuntimeException(e);
+         }
+     }
++
++    public static javax.net.ssl.X509KeyManager wrapKeyManager(javax.net.ssl.X509KeyManager km) {
++        if (km == null) {
++            return null;
++        }
++        if (km instanceof android.security.net.config.NetworkSecurityKeyManager) {
++            return km;
++        }
++        return new android.security.net.config.NetworkSecurityKeyManager(km);
++    }
+ }

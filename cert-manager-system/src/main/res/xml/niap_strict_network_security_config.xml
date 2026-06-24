@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Declarative definition of the niap-strict profile rules -->
+    <base-config>
+        <security-profile name="custom" />
+        
+        <niap-rfc8603-strict-sigalg>true</niap-rfc8603-strict-sigalg>
+        <niap-prohibited-tld-wildcards>
+            <tld>*.COM</tld>
+            <tld>*.NET</tld>
+            <tld>*.ORG</tld>
+            <tld>*.GOV</tld>
+            <tld>*.EDU</tld>
+        </niap-prohibited-tld-wildcards>
+        <niap-allowed-cipher-suites>
+            <cipher>TLS_AES_128_GCM_SHA256</cipher>
+            <cipher>TLS_AES_256_GCM_SHA384</cipher>
+            <cipher>TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256</cipher>
+            <cipher>TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256</cipher>
+            <cipher>TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384</cipher>
+            <cipher>TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384</cipher>
+        </niap-allowed-cipher-suites>
+        <niap-trust-anchor-policy>BOTH_CA</niap-trust-anchor-policy>
+        <niap-limit-tls-version>1.3</niap-limit-tls-version>
+        <niap-enforce-mandatory-extensions>true</niap-enforce-mandatory-extensions>
+        <niap-enforce-eku>true</niap-enforce-eku>
+        <niap-required-eku>serverAuth</niap-required-eku>
+        <niap-enforce-ca-constraints>true</niap-enforce-ca-constraints>
+        <niap-pkix-revocation-mode>strict</niap-pkix-revocation-mode>
+    </base-config>
+</network-security-config>

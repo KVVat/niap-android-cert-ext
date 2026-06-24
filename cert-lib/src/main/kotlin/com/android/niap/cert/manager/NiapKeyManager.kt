@@ -41,7 +41,7 @@ internal class NiapKeyManager(
     signingFn: (ByteArray) -> ByteArray
 ) : X509ExtendedKeyManager() {
 
-    private val remoteKey: RemotePrivateKey
+    private val remoteKey: PrivateKey
 
     init {
         require(certificateChain.isNotEmpty()) { "Empty certificate chain for alias '$alias'" }
@@ -50,7 +50,31 @@ internal class NiapKeyManager(
                 "NiapKeyManager only supports EC keys; cert for '$alias' has " +
                 "${certificateChain[0].publicKey.algorithm}"
             )
-        remoteKey = RemotePrivateKey(alias, params, signingFn)
+        try {
+            val signerClass = Class.forName("android.security.net.config.RemotePrivateKey\$Signer")
+            val signerProxy = java.lang.reflect.Proxy.newProxyInstance(
+                signerClass.classLoader,
+                arrayOf(signerClass),
+                object : java.lang.reflect.InvocationHandler {
+                    override fun invoke(proxy: Any?, method: java.lang.reflect.Method?, args: Array<out Any>?): Any? {
+                        if (method?.name == "sign") {
+                            val digest = args?.get(0) as ByteArray
+                            return signingFn(digest)
+                        }
+                        return null
+                    }
+                }
+            )
+            val keyClass = Class.forName("android.security.net.config.RemotePrivateKey")
+            val constructor = keyClass.getConstructor(
+                String::class.java,
+                java.security.spec.ECParameterSpec::class.java,
+                signerClass
+            )
+            remoteKey = constructor.newInstance(alias, params, signerProxy) as PrivateKey
+        } catch (e: Exception) {
+            throw IllegalStateException("Failed to construct RemotePrivateKey via reflection: " + e.message, e)
+        }
     }
 
     override fun chooseClientAlias(keyType: Array<out String>?, issuers: Array<out Principal>?, socket: Socket?) = alias

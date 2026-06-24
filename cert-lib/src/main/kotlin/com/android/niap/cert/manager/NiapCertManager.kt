@@ -98,9 +98,9 @@ class NiapCertManager(private val context: Context) {
         isBinding = true
         if (latch.count == 0L) latch = CountDownLatch(1)
         val intent = Intent("com.android.niap.cert.service.BIND").apply {
-            setPackage("com.example.niap.cert.ext.manager")
+            setPackage("com.android.niap.cert.service")
         }
-        Log.d("NiapCertManager", "Initiating bindService to com.example.niap.cert.ext.manager")
+        Log.d("NiapCertManager", "Initiating bindService to com.android.niap.cert.service")
         return context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
     }
 

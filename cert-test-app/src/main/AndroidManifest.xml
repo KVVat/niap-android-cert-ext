@@ -17,7 +17,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <queries>
-        <package android:name="com.example.niap.cert.ext.manager" />
+        <package android:name="com.android.niap.cert.service" />
     </queries>
 
     <uses-permission android:name="android.permission.INTERNET" />

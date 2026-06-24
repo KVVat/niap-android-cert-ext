@@ -21,11 +21,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.niap.cert.ext.manager"
+    namespace = "com.android.niap.cert.service"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.example.niap.cert.ext.manager"
+        applicationId = "com.android.niap.cert.service"
         minSdk = 32
         targetSdk = 34
         versionCode = 1

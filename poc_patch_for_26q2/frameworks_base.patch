@@ -1,0 +1,307 @@
+diff --git a/packages/NetworkSecurityConfig/platform/src/android/security/net/config/NetworkSecurityConfig.java b/packages/NetworkSecurityConfig/platform/src/android/security/net/config/NetworkSecurityConfig.java
+index f8dd4f145225..fb338d313b4e 100644
+--- a/packages/NetworkSecurityConfig/platform/src/android/security/net/config/NetworkSecurityConfig.java
++++ b/packages/NetworkSecurityConfig/platform/src/android/security/net/config/NetworkSecurityConfig.java
+@@ -74,6 +74,7 @@ public final class NetworkSecurityConfig {
+     private final boolean mHstsEnforced;
+     private final boolean mCertificateTransparencyVerificationRequired;
+     private final int mDomainEncryptionMode;
++    private final String mSecurityProfile;
+     private final PinSet mPins;
+     private final List<CertificatesEntryRef> mCertificatesEntryRefs;
+     private Set<TrustAnchor> mAnchors;
+@@ -86,12 +87,14 @@ public final class NetworkSecurityConfig {
+             boolean hstsEnforced,
+             boolean certificateTransparencyVerificationRequired,
+             int domainEncryptionMode,
++            String securityProfile,
+             PinSet pins,
+             List<CertificatesEntryRef> certificatesEntryRefs) {
+         mCleartextTrafficPermitted = cleartextTrafficPermitted;
+         mHstsEnforced = hstsEnforced;
+         mCertificateTransparencyVerificationRequired = certificateTransparencyVerificationRequired;
+         mDomainEncryptionMode = domainEncryptionMode;
++        mSecurityProfile = securityProfile;
+         mPins = pins;
+         mCertificatesEntryRefs = certificatesEntryRefs;
+         // Sort the certificates entry refs so that all entries that override pins come before
+@@ -158,6 +161,10 @@ public final class NetworkSecurityConfig {
+         return mDomainEncryptionMode;
+     }
+ 
++    public String getSecurityProfile() {
++        return mSecurityProfile;
++    }
++
+     public PinSet getPins() {
+         return mPins;
+     }
+@@ -321,6 +328,7 @@ public final class NetworkSecurityConfig {
+         private boolean mCertificateTransparencyVerificationRequiredSet = false;
+         private int mDomainEncryptionMode = defaultDomainEncryptionMode();
+         private boolean mDomainEncryptionModeSet = false;
++        private String mSecurityProfile;
+         private Builder mParentBuilder;
+ 
+         /**
+@@ -480,12 +488,28 @@ public final class NetworkSecurityConfig {
+             return defaultDomainEncryptionMode();
+         }
+ 
++        public Builder setSecurityProfile(String securityProfile) {
++            mSecurityProfile = securityProfile;
++            return this;
++        }
++
++        private String getEffectiveSecurityProfile() {
++            if (mSecurityProfile != null) {
++                return mSecurityProfile;
++            }
++            if (mParentBuilder != null) {
++                return mParentBuilder.getEffectiveSecurityProfile();
++            }
++            return null;
++        }
++
+         public NetworkSecurityConfig build() {
+             boolean cleartextPermitted = getEffectiveCleartextTrafficPermitted();
+             boolean hstsEnforced = getEffectiveHstsEnforced();
+             boolean certificateTransparencyVerificationRequired =
+                     getCertificateTransparencyVerificationRequired();
+             int domainEncryptionMode = getDomainEncryptionMode();
++            String securityProfile = getEffectiveSecurityProfile();
+             PinSet pinSet = getEffectivePinSet();
+             List<CertificatesEntryRef> entryRefs = getEffectiveCertificatesEntryRefs();
+             return new NetworkSecurityConfig(
+@@ -493,6 +517,7 @@ public final class NetworkSecurityConfig {
+                     hstsEnforced,
+                     certificateTransparencyVerificationRequired,
+                     domainEncryptionMode,
++                    securityProfile,
+                     pinSet,
+                     entryRefs);
+         }
+diff --git a/packages/NetworkSecurityConfig/platform/src/android/security/net/config/NetworkSecurityTrustManager.java b/packages/NetworkSecurityConfig/platform/src/android/security/net/config/NetworkSecurityTrustManager.java
+index 15aa523fb2b8..4bba744f249f 100644
+--- a/packages/NetworkSecurityConfig/platform/src/android/security/net/config/NetworkSecurityTrustManager.java
++++ b/packages/NetworkSecurityConfig/platform/src/android/security/net/config/NetworkSecurityTrustManager.java
+@@ -29,6 +29,7 @@ import java.security.MessageDigest;
+ import java.security.cert.CertificateException;
+ import java.security.cert.X509Certificate;
+ import java.util.List;
++import java.util.Collection;
+ import java.util.Map;
+ import java.util.Set;
+ 
+@@ -95,6 +96,7 @@ public class NetworkSecurityTrustManager extends X509ExtendedTrustManager {
+         List<X509Certificate> trustedChain =
+                 mDelegate.getTrustedChainForServer(certs, authType, socket);
+         checkPins(trustedChain);
++        checkNiapStrictProfile(trustedChain);
+     }
+ 
+     @Override
+@@ -103,6 +105,7 @@ public class NetworkSecurityTrustManager extends X509ExtendedTrustManager {
+         List<X509Certificate> trustedChain =
+                 mDelegate.getTrustedChainForServer(certs, authType, engine);
+         checkPins(trustedChain);
++        checkNiapStrictProfile(trustedChain);
+     }
+ 
+     /**
+@@ -114,6 +117,7 @@ public class NetworkSecurityTrustManager extends X509ExtendedTrustManager {
+             String host) throws CertificateException {
+         List<X509Certificate> trustedChain = mDelegate.checkServerTrusted(certs, authType, host);
+         checkPins(trustedChain);
++        checkNiapStrictProfile(trustedChain);
+         return trustedChain;
+     }
+ 
+@@ -127,6 +131,7 @@ public class NetworkSecurityTrustManager extends X509ExtendedTrustManager {
+         List<X509Certificate> trustedChain = mDelegate.checkServerTrusted(
+                 certs, ocspData, tlsSctData, authType, host);
+         checkPins(trustedChain);
++        checkNiapStrictProfile(trustedChain);
+         return trustedChain;
+     }
+ 
+@@ -212,4 +217,157 @@ public class NetworkSecurityTrustManager extends X509ExtendedTrustManager {
+             mDelegate.handleTrustStorageUpdate();
+         }
+     }
++
++    private void checkNiapStrictProfile(List<X509Certificate> chain) throws CertificateException {
++        if (!"niap-strict".equals(mNetworkSecurityConfig.getSecurityProfile())) {
++            return;
++        }
++        android.util.Log.i("NetworkSecurityTrustManager", "Enforcing NIAP strict validation for connection");
++        if (chain == null || chain.isEmpty()) {
++            android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: Certificate chain is empty");
++            throw new CertificateException("NIAP strict profile: Certificate chain is empty");
++        }
++        X509Certificate leafCert = chain.get(0);
++        
++        // 1. Algorithm Constraints
++        String sigAlgName = leafCert.getSigAlgName();
++        if (sigAlgName != null && !sigAlgName.toUpperCase(java.util.Locale.US).contains("SHA384") && 
++            !sigAlgName.toUpperCase(java.util.Locale.US).contains("SHA512")) {
++            String msg = "Signature algorithm must use SHA-384 or SHA-512: " + sigAlgName;
++            android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: " + msg);
++            throw new CertificateException("NIAP strict profile: " + msg, new java.security.cert.CertPathValidatorException(msg));
++        }
++        
++        java.security.PublicKey pubKey = leafCert.getPublicKey();
++        if (pubKey instanceof java.security.interfaces.RSAPublicKey) {
++            int keySize = ((java.security.interfaces.RSAPublicKey) pubKey).getModulus().bitLength();
++            if (keySize < 3072) {
++                String msg = "RSA key size " + keySize + " is less than required 3072";
++                android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: " + msg);
++                throw new CertificateException("NIAP strict profile: " + msg, new java.security.cert.CertPathValidatorException(msg));
++            }
++        } else if (pubKey instanceof java.security.interfaces.ECPublicKey) {
++            int fieldSize = ((java.security.interfaces.ECPublicKey) pubKey).getParams().getCurve().getField().getFieldSize();
++            if (fieldSize < 384) {
++                String msg = "EC key size " + fieldSize + " is less than required 384";
++                android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: " + msg);
++                throw new CertificateException("NIAP strict profile: " + msg, new java.security.cert.CertPathValidatorException(msg));
++            }
++        } else {
++            String msg = "Unsupported public key type: " + pubKey.getAlgorithm();
++            android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: " + msg);
++            throw new CertificateException("NIAP strict profile: " + msg, new java.security.cert.CertPathValidatorException(msg));
++        }
++
++        // 2. Mandatory Extensions
++        Set<String> nonCriticalOids = leafCert.getNonCriticalExtensionOIDs();
++        Set<String> criticalOids = leafCert.getCriticalExtensionOIDs();
++        Set<String> allOids = new android.util.ArraySet<>();
++        if (nonCriticalOids != null) allOids.addAll(nonCriticalOids);
++        if (criticalOids != null) allOids.addAll(criticalOids);
++
++        String[] mandatoryOids = { "2.5.29.35", "2.5.29.14", "2.5.29.15" };
++        for (String oid : mandatoryOids) {
++            if (!allOids.contains(oid)) {
++                String msg = "Mandatory extension missing: " + oid;
++                android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: " + msg);
++                throw new CertificateException("NIAP strict profile: " + msg, new java.security.cert.CertPathValidatorException(msg));
++            }
++        }
++
++        // 3. Field Enforcement (EKU, Basic Constraints)
++        try {
++            List<String> eku = leafCert.getExtendedKeyUsage();
++            if (eku != null) {
++                if (!eku.contains("1.3.6.1.5.5.7.3.1")) {
++                    String msg = "Leaf certificate missing required EKU: serverAuth (1.3.6.1.5.5.7.3.1)";
++                    android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: " + msg);
++                    throw new CertificateException("NIAP strict profile: " + msg, new java.security.cert.CertPathValidatorException(msg));
++                }
++            } else {
++                String msg = "Leaf certificate missing Extended Key Usage extension";
++                android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: " + msg);
++                throw new CertificateException("NIAP strict profile: " + msg, new java.security.cert.CertPathValidatorException(msg));
++            }
++        } catch (java.security.cert.CertificateParsingException e) {
++            String msg = "Failed to parse EKU";
++            android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: " + msg, e);
++            throw new CertificateException("NIAP strict profile: " + msg, new java.security.cert.CertPathValidatorException(msg, e));
++        }
++
++        int basicConstraints = leafCert.getBasicConstraints();
++        if (basicConstraints >= 0) {
++            String msg = "Leaf certificate must not be a CA";
++            android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: " + msg);
++            throw new CertificateException("NIAP strict profile: " + msg, new java.security.cert.CertPathValidatorException(msg));
++        }
++
++        // 4. TLD Wildcard Check
++        try {
++            Collection<List<?>> subAltNames = leafCert.getSubjectAlternativeNames();
++            if (subAltNames != null) {
++                Set<String> prohibitedTlds = new android.util.ArraySet<>(java.util.Arrays.asList("*.COM", "*.NET", "*.ORG"));
++                for (List<?> tldList : subAltNames) {
++                    if (tldList.size() >= 2) {
++                        String dnsName = tldList.get(1).toString().toUpperCase(java.util.Locale.US);
++                        if (prohibitedTlds.contains(dnsName)) {
++                            String msg = "Failed wildcard TLD check: " + dnsName;
++                            android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: " + msg);
++                            throw new CertificateException("NIAP strict profile: " + msg, new java.security.cert.CertPathValidatorException(msg));
++                        }
++                    }
++                }
++            }
++        } catch (java.security.cert.CertificateParsingException e) {
++            String msg = "Failed to parse SANs";
++            android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: " + msg, e);
++            throw new CertificateException("NIAP strict profile: " + msg, new java.security.cert.CertPathValidatorException(msg, e));
++        }
++
++        // 5. Revocation Checks (OCSP / CRL)
++        checkRevocation(chain);
++        
++        android.util.Log.i("NetworkSecurityTrustManager", "NIAP strict validation passed");
++    }
++
++    private void checkRevocation(List<X509Certificate> chain) throws CertificateException {
++        try {
++            java.security.cert.CertificateFactory certFactory = java.security.cert.CertificateFactory.getInstance("X.509");
++            List<X509Certificate> leafCerts = new java.util.ArrayList<>();
++            for (X509Certificate cert : chain) {
++                if (cert.getSubjectDN() == null || cert.getIssuerDN() == null) {
++                    leafCerts.add(cert);
++                    continue;
++                }
++                if (!cert.getSubjectDN().getName().equals(cert.getIssuerDN().getName())) {
++                    leafCerts.add(cert);
++                }
++            }
++            if (leafCerts.isEmpty()) {
++                String msg = "No non-root certificates found in chain";
++                android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: " + msg);
++                throw new java.security.cert.CertPathValidatorException("NIAP strict profile: " + msg);
++            }
++            java.security.cert.CertPath path = certFactory.generateCertPath(leafCerts);
++            java.security.KeyStore ks = java.security.KeyStore.getInstance("AndroidCAStore");
++            ks.load(null, null);
++            java.security.cert.CertPathValidator cpv = java.security.cert.CertPathValidator.getInstance("PKIX");
++            java.security.cert.PKIXParameters params = new java.security.cert.PKIXParameters(ks);
++            params.setRevocationEnabled(true);
++            
++            java.security.cert.PKIXRevocationChecker checker = (java.security.cert.PKIXRevocationChecker) cpv.getRevocationChecker();
++            checker.setOptions(java.util.EnumSet.of(java.security.cert.PKIXRevocationChecker.Option.NO_FALLBACK));
++            params.addCertPathChecker(checker);
++            
++            cpv.validate(path, params);
++        } catch (java.security.cert.CertPathValidatorException e) {
++            String msg = "CertPath validation failed: " + e.getMessage();
++            android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: " + msg, e);
++            throw new CertificateException("NIAP strict profile: " + msg, e);
++        } catch (java.security.GeneralSecurityException | java.io.IOException e) {
++            String msg = "Security exception during CertPath validation";
++            android.util.Log.e("NetworkSecurityTrustManager", "NIAP Violation: " + msg, e);
++            throw new CertificateException("NIAP strict profile: " + msg, e);
++        }
++    }
+ }
+diff --git a/packages/NetworkSecurityConfig/platform/src/android/security/net/config/XmlConfigSource.java b/packages/NetworkSecurityConfig/platform/src/android/security/net/config/XmlConfigSource.java
+index fcc8bea8a0ee..a52ace0c8711 100644
+--- a/packages/NetworkSecurityConfig/platform/src/android/security/net/config/XmlConfigSource.java
++++ b/packages/NetworkSecurityConfig/platform/src/android/security/net/config/XmlConfigSource.java
+@@ -320,6 +320,17 @@ public class XmlConfigSource implements ConfigSource {
+                                     + getConfigString(configType));
+                 }
+                 builder.setDomainEncryptionMode(parseDomainEncryptionMode(parser));
++            } else if ("security-profile".equals(tagName)) {
++                if (configType != CONFIG_BASE && configType != CONFIG_DOMAIN) {
++                    throw new ParserException(parser,
++                            "security-profile not allowed in " + getConfigString(configType));
++                }
++                String profileName = parser.getAttributeValue(null, "name");
++                builder.setSecurityProfile(profileName);
++                if ("niap-strict".equals(profileName)) {
++                    android.util.Log.d("NetworkSecurityConfig", "NIAP strict profile loaded");
++                }
++                XmlUtils.skipCurrentTag(parser);
+             } else {
+                 XmlUtils.skipCurrentTag(parser);
+             }

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+
+
+    <!-- By default, all domains are strictly validated under NIAP rules -->
+    <base-config>
+        <security-profile name="niap-strict" />
+    </base-config>
+
+    <!-- Google.com: Needs signature algorithm and RSA key size looseness, and no revocation checks -->
+    <domain-config>
+        <domain includeSubdomains="true">google.com</domain>
+        <security-profile name="custom" />
+        <niap-rfc8603-strict-sigalg>false</niap-rfc8603-strict-sigalg>
+        <niap-min-rsa-key-size>2048</niap-min-rsa-key-size>
+        <niap-min-ec-key-size>256</niap-min-ec-key-size>
+        <niap-pkix-revocation-mode>none</niap-pkix-revocation-mode>
+        <niap-trust-anchor-policy>BOTH_CA</niap-trust-anchor-policy>
+    </domain-config>
+
+    <!-- Whitehouse.gov: Needs EC key size looseness to 256, and no revocation checks -->
+    <domain-config>
+        <domain includeSubdomains="true">whitehouse.gov</domain>
+        <security-profile name="custom" />
+        <niap-min-ec-key-size>256</niap-min-ec-key-size>
+        <niap-pkix-revocation-mode>none</niap-pkix-revocation-mode>
+        <niap-trust-anchor-policy>BOTH_CA</niap-trust-anchor-policy>
+    </domain-config>
+
+    <!-- CSRC NIST: Uses custom profile but no overrides, falling back to strict defaults -->
+    <domain-config>
+        <domain includeSubdomains="true">nist.gov</domain>
+        <domain includeSubdomains="true">csrc.nist.gov</domain>
+        <security-profile name="niap" />
+    </domain-config>
+
+    <!-- Wikipedia.org: Kept under fully strict profile to demonstrate BLOCK behavior (validation fails) -->
+    <domain-config>
+        <domain includeSubdomains="true">wikipedia.org</domain>
+        <security-profile name="niap-strict" />
+    </domain-config>
+</network-security-config>
