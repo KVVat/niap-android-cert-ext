@@ -22,43 +22,59 @@ This framework addresses these gaps through a dual-mode integration architecture
 
 ---
 
-## 🏛️ System Architecture & Module Layout
+## 🏛️ Repository Architecture & Modular Layout
 
-The project is structured into modular units, separating core validator logic, stateful lifecycle services, interactive test applications, and automated device-level test runners.
+This repository is structured into two distinct tracks corresponding to the two integration modes. It is critical to understand their organization to avoid building, running, or referencing the wrong modules.
 
 ```
 niap-android-cert-ext/
-├── cert-lib/             # Core Android library (Validator & Client Manager API)
-├── cert-manager/         # Foreground Service & signing oracle (EST client & KeyStore engine)
-├── validator-test-app/   # WorkManager-based network testing application (strict/relaxed flavors)
-├── cert-test-app/        # Interactive Jetpack Compose application for manual verification
-├── agent-test/           # JUnit automated test suites designed for TestBed Core
-└── est-server/           # Pre-configured local EST test environment (Cisco libest & NGINX)
+├── [Mode 1: OS-Level Platform Integration (Patched OS / POC)]
+│   ├── poc_patch_for_26q2/       # Git patches for AOSP Conscrypt & Frameworks Base
+│   ├── cert-manager-system/      # Privileged system app daemon (signed with platform cert)
+│   ├── cert-testapp-system/      # System-level test app utilizing OS-level mTLS/EST
+│   └── strict-browser-app/       # Third-party web browser demo configured with <security-profile name="niap-strict">
+│
+├── [Mode 2: App-Level Fallback Library (Stock OS / Standalone)]
+│   ├── cert-lib/                 # Standalone client library (Validator, Custom JSSE Trust/KeyManagers)
+│   ├── cert-manager/             # Foreground service & signing oracle for unpatched OS
+│   ├── validator-test-app/       # Test application to verify cert-lib behaviors (strict/relaxed flavors)
+│   └── cert-test-app/            # Interactive Compose application for standalone fallback verification
+│
+└── [Shared Infrastructure]
+    ├── agent-test/               # JUnit automated test suites for TestBed Core
+    └── est-server/               # Pre-configured local EST test environment (Cisco libest)
 ```
 
-### 1. Core Validation (`cert-lib`)
-The foundation of the project, providing strict validation engines:
-* **`NiapCertValidator`**: The core inspector that processes a certificate chain and verifies signature algorithms, key strengths, certificate basic constraints, required EKUs, mandatory extensions, and wildcard SAN constraints.
-* **`NiapX509TrustManager`**: A custom `X509TrustManager` that wraps existing platform managers and runs active chain inspections on top of them.
-* **`NiapCertHelper`**: A high-level orchestrator that parses policy configuration from XML resources and configures networking clients (`OkHttpClient`, `HttpsURLConnection`) with the proper socket factories and verifiers.
-* **`NiapCertManager` & `NiapKeyManager`**: Client-side integration API that enables consumer applications to seamlessly fetch hardware-backed cryptographic identities from the `cert-manager` service via standard JCA interfaces without handling raw private keys.
+> [!WARNING]
+> **Build Artifact Name Collision Warning**:
+> Both `cert-manager` and `cert-manager-system` compile into an APK copied to the same automated runner destination (`cert-manager-debug.apk`). Similarly, both `cert-test-app` and `cert-testapp-system` copy to `cert-test-app-debug.apk`. 
+> Make sure you are building and deploying the correct module for your target testing context!
 
-### 2. Lifecycle Service (`cert-manager`)
-A background service package configured as a Foreground Service (`NiapCertService`) that acts as a secure certificate repository and remote signing oracle:
-* **Protocol-Agnostic Acquisition**: Implements key generation (ECDSA P-384 / RSA 3072) inside the secure **Android KeyStore** and requests certificates from external servers via **EST (RFC 7030)**.
-* **Remote Signing Provider**: Exposes a custom `RemoteSigningProvider` and standard AIDL service interface (`INiapCertManager.aidl`). When a client app makes mTLS calls, cryptographic signatures are delegated to the service via a secure Binder IPC channel. **Private key material never leaves the secure service context.**
-* **Validation & Storage**: Validates incoming certificates against local policies before writing them into the secure KeyStore engine.
+---
 
-### 3. Interactive Client (`cert-test-app`)
-A Jetpack Compose-based user application created for developers and evaluators to:
-* Configure connection settings (EST endpoints, target mTLS servers, CA credentials).
-* Trigger interactive certificate enrollment, view real-time state machines, inspect cryptographic metadata (Subject, Issuer, Serial, Signature Algorithm, Validity).
-* Test live mTLS endpoints and view detailed client logs immediately.
+## 🛠️ Module Reference by Integration Mode
 
-### 4. Automated Testbed (`agent-test`)
-A JUnit test suite designed to register and execute device-level test cases in collaboration with the **TestBed Core** automation system:
-* **`FiaX509ValidatorTest`** (`NiapValidatorTest` class): Installs strict/relaxed flavors of `validator-test-app` and tests web targets to verify that non-compliant SHA-256 endpoints are successfully blocked in strict mode and accepted in relaxed mode.
-* **`CertManagerTest`**: Automates full-cycle local EST enrollment, setups ADB reverse tunnels, validates state transitions, and conducts mutual TLS authentications against local mock services.
+### 1. OS-Level Platform Integration (Patched OS)
+This mode implements deep platform-level enforcement. The validation rules and mTLS client enrollment are performed transparently by the OS.
+
+* **`poc_patch_for_26q2/`**: Contains AOSP git patches for Conscrypt and Frameworks Base. These patches introduce the XML parsing of `<security-profile name="niap-strict">` and `<est-server>` and hook the JCA signing mechanisms via Binder IPC.
+* **`cert-manager-system/`**: A privileged system daemon application (`com.android.niap.cert.service`) designed to be preinstalled in `/system_ext/priv-app/`. It acts as the secure certificate repository and signing oracle for the patched Conscrypt layer. It depends directly on the platform changes in `poc_patch_for_26q2`.
+* **`cert-testapp-system/`**: A system-level test application designed to verify and interact with the privileged `cert-manager-system` daemon when running on the patched OS.
+* **`strict-browser-app/`**: A fully-functional third-party web browser application used as a practical demonstration. It configures the strict profile via standard `<security-profile name="niap-strict">` in its `network_security_config.xml`, showcasing how a standard app's TLS connections are intercepted and strictly validated by the patched Conscrypt provider under the hood.
+
+### 2. App-Level Fallback Library (Stock OS)
+This mode provides a pure application-space integration, allowing apps to achieve NIAP-compliant validation and mTLS on stock, unmodified Android devices.
+
+* **`cert-lib/`**: A client library that manually implements the strict NIAP validation rules (`NiapCertValidator`) and custom JSSE wrappers (`NiapX509TrustManager`, `NiapKeyManager`).
+* **`cert-manager/`**: A standard foreground service and signing oracle that emulates the system certificate management daemon on an unpatched OS.
+* **`validator-test-app/`**: A WorkManager-based test utility used to run automated network validation tests against relaxed and strict configurations using `cert-lib`.
+* **`cert-test-app/`**: An interactive Compose application that demonstrates standalone cert-lib and cert-manager flows without platform patches.
+
+### 3. Shared Infrastructure
+* **`agent-test/`**: A JUnit test suite designed to register and execute device-level test cases in collaboration with the **TestBed Core** automation system:
+  * **`FiaX509ValidatorTest`** (`NiapValidatorTest` class): Installs strict/relaxed flavors of `validator-test-app` and tests web targets to verify that non-compliant SHA-256 endpoints are successfully blocked in strict mode and accepted in relaxed mode.
+  * **`CertManagerTest`**: Automates full-cycle local EST enrollment, setups ADB reverse tunnels, validates state transitions, and conducts mutual TLS authentications against local mock services.
+* **`est-server/`**: The local compliance mock environment using Cisco libest and NGINX to serve compliant ECDSA P-384 certificates signed with SHA-384.
 
 ---
 

@@ -4,6 +4,31 @@ This document contains architectural context, workflows, and guidelines for LLM 
 
 ---
 
+## ⚠️ Crucial Context Distinction: OS-Level vs. App-Level Modes (Do Not Mix!)
+
+This repository contains **two completely separate implementation tracks** for NIAP compliance. As an AI agent, you must **NEVER** confuse the source files, configurations, or target build tasks between these two contexts:
+
+| Track / Context | OS-Level Platform Integration (Patched OS) | App-Level Fallback Library (Stock OS) |
+| :--- | :--- | :--- |
+| **Primary Target** | Custom OS builds (e.g., Stallion userdebug) with platform patches. | Standard, unmodified retail Android devices. |
+| **Enforcement Layer**| Patched Android OS Framework & Conscrypt (transparently). | Custom client library (`cert-lib`) bundled inside the app. |
+| **Core Modules** | `poc_patch_for_26q2`, `cert-manager-system`, `cert-testapp-system`, `strict-browser-app` | `cert-lib`, `cert-manager`, `cert-test-app`, `validator-test-app` |
+| **Config Style** | Declarative `<security-profile name="niap-strict">` in standard `network-security-config.xml`. | Custom configuration XML parsed by `cert-lib`. |
+| **Service Daemon** | `cert-manager-system` (Privileged platform-signed system app). | `cert-manager` (Standard third-party foreground service). |
+
+### Actionable Rules for AI Agents:
+1. **Never reference the wrong directory**: If a task asks you to debug or verify the platform-level strict mTLS/EST enrollment, do **NOT** modify or inspect the files in `cert-manager` or `cert-test-app`. You must edit or reference `cert-manager-system` or `cert-testapp-system`.
+2. **Build Output Name Collision Alert**:
+   - Both `cert-manager` and `cert-manager-system` copy their output to the runner under the same filename: `cert-manager-debug.apk`.
+   - Both `cert-test-app` and `cert-testapp-system` copy their output under `cert-test-app-debug.apk`.
+   - **Always double check which gradle build task you run!** Mixing these up will overwrite the runner's resources with the wrong implementation, leading to silent test failures or incorrect verification results.
+3. **Understand which network security config is active**:
+   - In the **OS-Level track**, the platform's Network Security Config parser is patched to natively understand `<security-profile name="niap-strict">` (demonstrated in `strict-browser-app`).
+   - In the **App-Level track**, standard Android network security config does not support this tag; instead, `cert-lib` parses its own custom XML or operates programmatically.
+4. **Privileged System App Rule**: `cert-manager-system` runs as a platform-signed privileged app. Never apply `<security-profile name="niap-strict">` to its own config. It must maintain standard TLS posture to communicate with system components.
+
+---
+
 ## 1. Starting and Stopping TestBed Core (MCP Server)
 This project integrates with a desktop-based automation runner and MCP server hosted by the `testbed-core` application on port `11452` (`localhost:11452`). The server must be active for the agent to interface with physical devices or emulators.
 

@@ -40,3 +40,16 @@ bin/
 *.img
 *.apk
 !poc_patch_for_26q2/CertManagerGoogle.apk
+
+# Local-only POC security design and exploit verification files
+poc-design/README.md
+poc-design/buganizer_report_draft.md
+poc-design/build_verify_leak.sh
+poc-design/flash_poc_stallion.sh
+poc-design/founding.md
+poc-design/keymint_fix.patch
+poc-design/memo.md
+poc-design/repro-guide.md
+poc-design/scan_device_memory.sh
+poc-design/session_handoff.md
+poc-design/verify_leak.c
